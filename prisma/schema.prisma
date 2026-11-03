@@ -1,0 +1,463 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TransactionType {
+  INCOME
+  EXPENSE
+}
+
+enum TransactionStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  PAID
+  CONTROLLED
+  CANCELLED
+}
+
+enum ApprovalDecision {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ObservationStatus {
+  OPEN
+  RESPONDED
+  VERIFIED
+  CLOSED
+}
+
+enum AccountType {
+  BANK
+  CASH
+  MOBILE_MONEY
+  ACTIVITY_FUND
+}
+
+enum ActivityStatus {
+  PLANNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum AttachmentKind {
+  INVOICE
+  RECEIPT
+  BANK_STATEMENT
+  TRANSFER_PROOF
+  QUOTE
+  CONTRACT
+  OTHER
+}
+
+enum InsightSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+enum AdjustmentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  APPLIED
+  CANCELLED
+}
+
+model User {
+  id             String    @id @default(cuid())
+  email          String    @unique
+  name           String
+  passwordHash   String
+  active         Boolean   @default(true)
+  failedAttempts Int       @default(0)
+  lockedUntil    DateTime?
+  mustChangePassword Boolean  @default(false)
+  totpSecret     String?
+  totpEnabled    Boolean   @default(false)
+  totpLastStep   Int?
+  totpRecovery   String[]
+  roleId         String
+  role           Role      @relation(fields: [roleId], references: [id])
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  txCreated    Transaction[]      @relation("TxCreator")
+  txValidated  Transaction[]      @relation("TxValidator")
+  txPaid       Transaction[]      @relation("TxPayer")
+  txControlled Transaction[]      @relation("TxController")
+  txCancelled  Transaction[]      @relation("TxCanceller")
+  approvals    Approval[]
+  attachments  Attachment[]
+  auditLogs    AuditLog[]
+  obsRaised    AuditObservation[] @relation("ObsRaiser")
+  obsAssigned  AuditObservation[] @relation("ObsAssignee")
+  activities   Activity[]
+  notifications Notification[]
+  locks        PeriodLock[]       @relation("LockedBy")
+  adjRequested BalanceAdjustment[] @relation("AdjRequester")
+  adjApplied   BalanceAdjustment[] @relation("AdjApplier")
+  adjDecisions BalanceAdjustmentApproval[]
+
+  @@map("users")
+}
+
+model Role {
+  id          String           @id @default(cuid())
+  key         String           @unique
+  name        String
+  description String?
+  users       User[]
+  permissions RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id    String           @id @default(cuid())
+  key   String           @unique
+  label String
+  group String
+  roles RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model Region {
+  id           String        @id @default(cuid())
+  name         String        @unique
+  zone         String?
+  contactName  String?
+  contactPhone String?
+  active       Boolean       @default(true)
+  transactions Transaction[]
+  activities   Activity[]
+
+  @@map("regions")
+}
+
+model Account {
+  id             String        @id @default(cuid())
+  name           String        @unique
+  type           AccountType
+  currency       String        @default("MAD")
+  openingBalance Decimal       @default(0) @db.Decimal(14, 2)
+  active         Boolean       @default(true)
+  activityId     String?
+  activity       Activity?     @relation(fields: [activityId], references: [id])
+  transactions   Transaction[]
+  adjustments    BalanceAdjustment[]
+
+  @@map("accounts")
+}
+
+model Category {
+  id           String          @id @default(cuid())
+  name         String
+  type         TransactionType
+  active       Boolean         @default(true)
+  transactions Transaction[]
+  budgetLines  BudgetLine[]
+
+  @@unique([name, type])
+  @@map("categories")
+}
+
+model Activity {
+  id           String         @id @default(cuid())
+  name         String
+  description  String?
+  startDate    DateTime
+  endDate      DateTime
+  status       ActivityStatus @default(PLANNED)
+  managerId    String?
+  manager      User?          @relation(fields: [managerId], references: [id])
+  regionId     String?
+  region       Region?        @relation(fields: [regionId], references: [id])
+  createdAt    DateTime       @default(now())
+  budgets      Budget[]
+  transactions Transaction[]
+  funds        Account[]
+
+  @@map("activities")
+}
+
+model Budget {
+  id         String       @id @default(cuid())
+  activityId String
+  name       String       @default("Budget prévisionnel")
+  createdAt  DateTime     @default(now())
+  activity   Activity     @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  lines      BudgetLine[]
+
+  @@map("budgets")
+}
+
+model BudgetLine {
+  id         String    @id @default(cuid())
+  budgetId   String
+  label      String
+  categoryId String?
+  planned    Decimal   @db.Decimal(14, 2)
+  budget     Budget    @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+  category   Category? @relation(fields: [categoryId], references: [id])
+
+  @@map("budget_lines")
+}
+
+model Transaction {
+  id              String            @id @default(cuid())
+  reference       String            @unique
+  type            TransactionType
+  amount          Decimal           @db.Decimal(14, 2)
+  currency        String            @default("MAD")
+  exchangeRate    Decimal           @default(1) @db.Decimal(14, 6)
+  amountMad       Decimal           @db.Decimal(14, 2)
+  transactionDate DateTime
+  description     String
+  paymentMethod   String?
+  bankReference   String?
+  status          TransactionStatus @default(DRAFT)
+
+  categoryId String
+  accountId  String
+  activityId String?
+  regionId   String?
+  category   Category  @relation(fields: [categoryId], references: [id])
+  account    Account   @relation(fields: [accountId], references: [id])
+  activity   Activity? @relation(fields: [activityId], references: [id])
+  region     Region?   @relation(fields: [regionId], references: [id])
+
+  createdById    String
+  createdBy      User      @relation("TxCreator", fields: [createdById], references: [id])
+  validatedById  String?
+  validatedBy    User?     @relation("TxValidator", fields: [validatedById], references: [id])
+  validatedAt    DateTime?
+  paidById       String?
+  paidBy         User?     @relation("TxPayer", fields: [paidById], references: [id])
+  paidAt         DateTime?
+  controlledById String?
+  controlledBy   User?     @relation("TxController", fields: [controlledById], references: [id])
+  controlledAt   DateTime?
+  cancelledById  String?
+  cancelledBy    User?     @relation("TxCanceller", fields: [cancelledById], references: [id])
+  cancelledAt    DateTime?
+  cancelReason   String?
+
+  aiRiskScore Float?
+  aiCategory  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  approvals    Approval[]
+  attachments  Attachment[]
+  observations AuditObservation[]
+  insights     AiInsight[]
+  embedding    TxEmbedding?
+
+  @@index([transactionDate])
+  @@index([status])
+  @@index([activityId])
+  @@map("transactions")
+}
+
+model Approval {
+  id            String           @id @default(cuid())
+  transactionId String
+  approverId    String?
+  level         Int              @default(1)
+  decision      ApprovalDecision @default(PENDING)
+  comment       String?
+  createdAt     DateTime         @default(now())
+  decidedAt     DateTime?
+  supersededAt  DateTime?
+  transaction   Transaction      @relation(fields: [transactionId], references: [id])
+  approver      User?            @relation(fields: [approverId], references: [id])
+
+  @@map("approvals")
+}
+
+model Attachment {
+  id            String         @id @default(cuid())
+  transactionId String
+  kind          AttachmentKind @default(OTHER)
+  fileName      String
+  mimeType      String
+  size          Int
+  storageKey    String
+  uploadedById  String
+  createdAt     DateTime       @default(now())
+  transaction   Transaction    @relation(fields: [transactionId], references: [id])
+  uploadedBy    User           @relation(fields: [uploadedById], references: [id])
+
+  @@index([transactionId])
+  @@map("attachments")
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  seq       Int      @unique @default(autoincrement())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  action    String
+  entity    String
+  entityId  String?
+  before    Json?
+  after     Json?
+  reason    String?
+  prevHash  String
+  hash      String
+  createdAt DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@map("audit_logs")
+}
+
+model AuditObservation {
+  id            String            @id @default(cuid())
+  transactionId String?
+  title         String
+  description   String
+  status        ObservationStatus @default(OPEN)
+  raisedById    String
+  assigneeId    String
+  response      String?
+  respondedAt   DateTime?
+  verifiedAt    DateTime?
+  closedAt      DateTime?
+  createdAt     DateTime          @default(now())
+  transaction   Transaction?      @relation(fields: [transactionId], references: [id])
+  raisedBy      User              @relation("ObsRaiser", fields: [raisedById], references: [id])
+  assignee      User              @relation("ObsAssignee", fields: [assigneeId], references: [id])
+
+  @@map("audit_observations")
+}
+
+model AiInsight {
+  id            String          @id @default(cuid())
+  kind          String
+  severity      InsightSeverity @default(WARNING)
+  title         String
+  message       String
+  transactionId String?
+  resolved      Boolean         @default(false)
+  createdAt     DateTime        @default(now())
+  transaction   Transaction?    @relation(fields: [transactionId], references: [id])
+
+  @@index([kind, transactionId])
+  @@map("ai_insights")
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  title     String
+  body      String
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+  @@map("notifications")
+}
+
+model PeriodLock {
+  id         String    @id @default(cuid())
+  label      String
+  startDate  DateTime
+  endDate    DateTime
+  lockedById String
+  lockedAt   DateTime  @default(now())
+  unlockedAt DateTime?
+  unlockReason String?
+  lockedBy   User      @relation("LockedBy", fields: [lockedById], references: [id])
+
+  @@map("period_locks")
+}
+
+model Setting {
+  key   String @id
+  value Json
+
+  @@map("settings")
+}
+
+model ReferenceCounter {
+  year Int @id
+  last Int @default(0)
+
+  @@map("reference_counters")
+}
+
+model TxEmbedding {
+  transactionId String      @id
+  text          String
+  model         String
+  vector        Float[]
+  updatedAt     DateTime    @updatedAt
+  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  @@map("tx_embeddings")
+}
+
+/// Modification du solde d'un compte : demandée par la Trésorière, autorisée par CHAQUE rôle détenant `balance.approve`
+/// (Commissaire aux comptes + Présidente par défaut), puis appliquée par la Trésorière.
+model BalanceAdjustment {
+  id             String           @id @default(cuid())
+  accountId      String
+  account        Account          @relation(fields: [accountId], references: [id])
+  currentBalance Decimal          @db.Decimal(14, 2)
+  newBalance     Decimal          @db.Decimal(14, 2)
+  delta          Decimal          @db.Decimal(14, 2)
+  reason         String
+  status         AdjustmentStatus @default(PENDING)
+  requestedById  String
+  requestedBy    User             @relation("AdjRequester", fields: [requestedById], references: [id])
+  createdAt      DateTime         @default(now())
+  decidedAt      DateTime?
+  appliedById    String?
+  appliedBy      User?            @relation("AdjApplier", fields: [appliedById], references: [id])
+  appliedAt      DateTime?
+  cancelReason   String?
+  approvals      BalanceAdjustmentApproval[]
+
+  @@index([accountId, status])
+  @@map("balance_adjustments")
+}
+
+model BalanceAdjustmentApproval {
+  id           String            @id @default(cuid())
+  adjustmentId String
+  roleId       String
+  roleName     String
+  approverId   String?
+  decision     ApprovalDecision  @default(PENDING)
+  comment      String?
+  decidedAt    DateTime?
+  adjustment   BalanceAdjustment @relation(fields: [adjustmentId], references: [id], onDelete: Cascade)
+  approver     User?             @relation(fields: [approverId], references: [id])
+
+  @@unique([adjustmentId, roleId])
+  @@map("balance_adjustment_approvals")
+}

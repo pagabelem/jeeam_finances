@@ -1,0 +1,54 @@
+{
+  "name": "jeeam-finance",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "prisma generate && next build",
+    "start": "next start",
+    "postinstall": "prisma generate",
+    "db:push": "prisma db push",
+    "db:harden": "prisma db execute --file prisma/sql/hardening.sql --schema prisma/schema.prisma",
+    "db:seed": "prisma db seed",
+    "db:setup": "npm run db:push && npm run db:harden && npm run db:seed",
+    "db:migrate": "prisma migrate deploy && npm run db:harden",
+    "db:migrate:dev": "prisma migrate dev",
+    "db:baseline": "mkdir -p prisma/migrations/0_init && prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script > prisma/migrations/0_init/migration.sql",
+    "storage:migrate": "tsx scripts/migrate-storage-to-s3.ts",
+    "start:prod": "sh scripts/start.sh",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.700.0",
+    "@prisma/client": "^5.22.0",
+    "bcryptjs": "^2.4.3",
+    "exceljs": "^4.4.0",
+    "jszip": "^3.10.1",
+    "next": "14.2.15",
+    "next-auth": "^4.24.8",
+    "pdf-lib": "^1.17.1",
+    "qrcode": "^1.5.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^2.13.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/node": "^20.16.0",
+    "@types/qrcode": "^1.5.5",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.47",
+    "prisma": "^5.22.0",
+    "tailwindcss": "^3.4.14",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}
