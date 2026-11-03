@@ -18,5 +18,5 @@ export async function GET(req: Request) {
   for (const a of list) zip.file(`${a.transaction.reference}/${a.kind}_${a.fileName}`, await readStored(a.storageKey));
   await audit({ userId: u.id, action: 'ATTACHMENTS_ZIP', entity: 'Attachment', after: { count: list.length, from, to, activityId, categoryId } });
   const out = await zip.generateAsync({ type: 'uint8array' });
-  return new Response(out, { headers: { 'Content-Type': 'application/zip', 'Content-Disposition': 'attachment; filename="justificatifs.zip"' } });
+  return new Response(new Uint8Array(out), { headers: { 'Content-Type': 'application/zip', 'Content-Disposition': 'attachment; filename="justificatifs.zip"' } });
 }
