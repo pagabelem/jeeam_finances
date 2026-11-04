@@ -105,13 +105,21 @@ export async function disableTotp(fd: FormData) {
   });
 }
 
-/** Réinitialisation par un administrateur (téléphone perdu). L'utilisateur devra se ré-enrôler à la prochaine connexion. */
-export async function adminResetTotp(id: string) {
+/**
+ * Réinitialisation de la 2FA par un administrateur (admin.users). La personne devra scanner un nouveau QR à sa prochaine connexion.
+ * Sur son propre compte, l'administrateur doit confirmer son mot de passe ; il est alors redirigé vers « Mon compte » pour se ré-enrôler.
+ */
+export async function adminResetTotp(id: string, fd?: FormData) {
   await act('/admin/utilisateurs', async () => {
     const me = await requireAction('admin.users');
-    if (id === me.id) throw new AppError('Vous ne pouvez pas réinitialiser votre propre double authentification.');
+    const target = await db.user.findUnique({ where: { id } });
+    if (!target) throw new AppError('Utilisateur introuvable.');
+    if (id === me.id) {
+      if (!(await bcrypt.compare(String(fd?.get('password') ?? ''), target.passwordHash))) throw new AppError('Mot de passe incorrect : confirmez votre mot de passe pour réinitialiser votre propre 2FA.');
+    }
     await db.user.update({ where: { id }, data: { totpEnabled: false, totpSecret: null, totpLastStep: null, totpRecovery: [] } });
-    await audit({ userId: me.id, action: 'TOTP_ADMIN_RESET', entity: 'User', entityId: id });
-    return ok('/admin/utilisateurs', 'Double authentification réinitialisée');
+    await audit({ userId: me.id, action: 'TOTP_ADMIN_RESET', entity: 'User', entityId: id, reason: id === me.id ? 'Auto-réinitialisation (mot de passe confirmé)' : null });
+    revalidatePath('/', 'layout');
+    return ok(id === me.id ? '/profil' : '/admin/utilisateurs', id === me.id ? 'Double authentification réinitialisée : scannez un nouveau QR' : 'Double authentification réinitialisée : la personne scannera un nouveau QR à sa prochaine connexion');
   });
 }

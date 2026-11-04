@@ -1,5 +1,7 @@
 'use server';
 import { revalidatePath } from 'next/cache';
+import { cookies } from 'next/headers';
+import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { db } from '@/lib/db';
@@ -9,19 +11,38 @@ import { audit } from '@/lib/audit';
 import { AUDITOR_FORBIDDEN } from '@/lib/permissions';
 
 const pwd = z.string().min(10, 'Mot de passe : 10 caractères minimum').regex(/[A-Za-z]/, 'Mot de passe : au moins une lettre').regex(/\d/, 'Mot de passe : au moins un chiffre');
+/** Mot de passe temporaire lisible (12 car., sans caractères ambigus) : respecte la règle lettre + chiffre. */
+function tempPassword() {
+  const L = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz', D = '23456789';
+  const pick = (set: string) => set[crypto.randomInt(set.length)];
+  const chars = [pick(L), pick(L), pick(D), pick(D), ...Array.from({ length: 8 }, () => pick(L + D))];
+  for (let i = chars.length - 1; i > 0; i--) { const j = crypto.randomInt(i + 1); [chars[i], chars[j]] = [chars[j], chars[i]]; }
+  return chars.join('');
+}
+/** Le mot de passe temporaire n'est affiché qu'une fois à l'administrateur (cookie httpOnly de 2 minutes). */
+function flashTemp(name: string, password: string) {
+  cookies().set('jeeam_temp', `${name}|${password}`, { httpOnly: true, sameSite: 'strict', secure: process.env.NODE_ENV === 'production', path: '/admin/utilisateurs', maxAge: 120 });
+}
+const RESET_2FA = { totpEnabled: false, totpSecret: null, totpLastStep: null, totpRecovery: [] as string[] };
+
 const first = (r: { success: false; error: z.ZodError }) => { throw new AppError(r.error.issues[0].message); };
 
 export async function createUser(fd: FormData) {
   await act('/admin/utilisateurs', async () => {
     const me = await requireAction('admin.users');
+    const gen = fd.get('generate') === 'on';
+    const input = Object.fromEntries(fd);
+    const password = gen ? tempPassword() : String(input.password ?? '');
     const r = z.object({ name: z.string().trim().min(2, 'Nom requis'), email: z.string().trim().toLowerCase().email('E-mail invalide'), roleId: z.string().min(1, 'Rôle requis'), password: pwd })
-      .safeParse(Object.fromEntries(fd));
+      .safeParse({ ...input, password });
     if (!r.success) return first(r);
     if (await db.user.findUnique({ where: { email: r.data.email } })) throw new AppError('E-mail déjà utilisé.');
-    const u = await db.user.create({ data: { name: r.data.name, email: r.data.email, roleId: r.data.roleId, passwordHash: await bcrypt.hash(r.data.password, 12), mustChangePassword: true } });
+    // Compte neuf : mot de passe temporaire à changer, aucun secret 2FA (la personne scannera elle-même son QR).
+    const u = await db.user.create({ data: { name: r.data.name, email: r.data.email, roleId: r.data.roleId, passwordHash: await bcrypt.hash(r.data.password, 12), mustChangePassword: true, ...RESET_2FA } });
     await audit({ userId: me.id, action: 'USER_CREATE', entity: 'User', entityId: u.id, after: { name: u.name, email: u.email, roleId: u.roleId } });
+    if (gen) flashTemp(u.name, r.data.password);
     revalidatePath('/admin/utilisateurs');
-    return ok('/admin/utilisateurs', 'Utilisateur créé');
+    return ok('/admin/utilisateurs', gen ? 'Utilisateur créé : copiez le mot de passe temporaire affiché ci-dessous' : 'Utilisateur créé');
   });
 }
 
@@ -189,21 +210,28 @@ export async function updateUser(id: string, fd: FormData) {
       roleId: z.string().min(1, 'Rôle requis'),
     }).safeParse(Object.fromEntries(fd));
     if (!r.success) return first(r);
-    const newPwd = String(fd.get('password') ?? '');
-    if (newPwd) { const p = pwd.safeParse(newPwd); if (!p.success) return first(p); }
+    const gen = fd.get('generate') === 'on';
+    const newPwd = gen ? tempPassword() : String(fd.get('password') ?? '');
+    if (newPwd && !gen) { const p = pwd.safeParse(newPwd); if (!p.success) return first(p); }
     const u = await db.user.findUnique({ where: { id } });
     if (!u) throw new AppError('Utilisateur introuvable.');
     if (u.id === me.id && r.data.roleId !== u.roleId) throw new AppError('Vous ne pouvez pas modifier votre propre rôle.');
     const role = await db.role.findUnique({ where: { id: r.data.roleId } });
     if (!role) throw new AppError('Rôle introuvable.');
-    if (r.data.email !== u.email && (await db.user.findUnique({ where: { email: r.data.email } }))) throw new AppError('E-mail déjà utilisé par un autre compte.');
+    const emailChanged = r.data.email !== u.email;
+    if (emailChanged && (await db.user.findUnique({ where: { email: r.data.email } }))) throw new AppError('E-mail déjà utilisé par un autre compte.');
     const data: Record<string, unknown> = { name: r.data.name, email: r.data.email, roleId: r.data.roleId };
+    // Changement d'e-mail = changement de titulaire : l'ancien authentificateur est invalidé, la personne devra scanner un nouveau QR.
+    if (emailChanged && u.id !== me.id) Object.assign(data, RESET_2FA);
+    if (emailChanged && u.id === me.id) Object.assign(data, RESET_2FA);
     if (newPwd) Object.assign(data, { passwordHash: await bcrypt.hash(newPwd, 12), failedAttempts: 0, lockedUntil: null, mustChangePassword: u.id !== me.id });
     await db.user.update({ where: { id }, data });
+    if (emailChanged && u.totpEnabled) await audit({ userId: me.id, action: 'TOTP_ADMIN_RESET', entity: 'User', entityId: id, reason: 'Changement d’e-mail' });
+    if (gen) flashTemp(r.data.name, newPwd);
     await audit({ userId: me.id, action: 'USER_UPDATE', entity: 'User', entityId: id,
-      before: { name: u.name, email: u.email, roleId: u.roleId }, after: { name: r.data.name, email: r.data.email, roleId: r.data.roleId, motDePasseModifie: !!newPwd } });
+      before: { name: u.name, email: u.email, roleId: u.roleId }, after: { name: r.data.name, email: r.data.email, roleId: r.data.roleId, motDePasseModifie: !!newPwd, double2faReinitialisee: emailChanged } });
     revalidatePath('/', 'layout');
-    return ok('/admin/utilisateurs', 'Utilisateur modifié');
+    return ok('/admin/utilisateurs', gen ? 'Utilisateur modifié : copiez le mot de passe temporaire affiché ci-dessous' : emailChanged ? 'Utilisateur modifié : sa double authentification est réinitialisée (nouveau QR à la prochaine connexion)' : 'Utilisateur modifié');
   });
 }
 
