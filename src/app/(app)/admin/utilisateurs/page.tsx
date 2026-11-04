@@ -1,6 +1,6 @@
 import { db } from '@/lib/db';
 import { requirePage } from '@/lib/session';
-import { createUser, resetPassword, toggleUser, updateUserRole } from '@/actions/admin';
+import { createUser, toggleUser, updateUser } from '@/actions/admin';
 import { adminResetTotp } from '@/actions/account';
 import { Badge, Field, Flash } from '@/components/ui';
 
@@ -19,13 +19,25 @@ export default async function Users({ searchParams }: { searchParams: { error?: 
       <div className="card overflow-x-auto p-0">
         <table className="tbl"><thead><tr><th>Utilisateur</th><th>Rôle</th><th>Statut</th><th>Actions</th></tr></thead>
           <tbody>{users.map((u) => (
-            <tr key={u.id}><td><b>{u.name}</b><div className="text-xs text-slate-400">{u.email}</div></td>
-              <td><form action={updateUserRole.bind(null, u.id)} className="flex gap-1"><select name="roleId" defaultValue={u.roleId} className="input w-48" disabled={u.id === me.id}>{roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}</select>{u.id !== me.id && <button className="btn-sec btn-sm">OK</button>}</form></td>
+            <tr key={u.id} className="align-top"><td><b>{u.name}</b><div className="text-xs text-slate-400">{u.email}</div></td>
+              <td>{u.role.name}</td>
               <td>{u.active ? <Badge tone="green">actif</Badge> : <Badge>désactivé</Badge>} {u.totpEnabled && <Badge tone="blue">2FA</Badge>}</td>
-              <td className="flex flex-wrap gap-2">
-                {u.id !== me.id && <form action={toggleUser.bind(null, u.id)}><button className="btn-sec btn-sm">{u.active ? 'Désactiver' : 'Réactiver'}</button></form>}
-                {u.id !== me.id && u.totpEnabled && <form action={adminResetTotp.bind(null, u.id)}><button className="btn-sec btn-sm">Réinit. 2FA</button></form>}
-                <form action={resetPassword.bind(null, u.id)} className="flex gap-1"><input name="password" type="password" placeholder="Nouveau mot de passe" className="input w-44" /><button className="btn-sec btn-sm">Réinitialiser</button></form>
+              <td className="space-y-2">
+                <div className="flex flex-wrap gap-2">
+                  {u.id !== me.id && <form action={toggleUser.bind(null, u.id)}><button className="btn-sec btn-sm">{u.active ? 'Désactiver' : 'Réactiver'}</button></form>}
+                  {u.id !== me.id && u.totpEnabled && <form action={adminResetTotp.bind(null, u.id)}><button className="btn-sec btn-sm">Réinit. 2FA</button></form>}
+                </div>
+                <details>
+                  <summary className="cursor-pointer text-sm text-brand-700 underline">Modifier (nom, e-mail, rôle, mot de passe)</summary>
+                  <form action={updateUser.bind(null, u.id)} className="mt-2 grid gap-2 md:grid-cols-2">
+                    <div><label className="label">Nom</label><input name="name" required defaultValue={u.name} className="input" /></div>
+                    <div><label className="label">E-mail</label><input name="email" type="email" required defaultValue={u.email} className="input" /></div>
+                    <div><label className="label">Rôle{u.id === me.id && ' (non modifiable sur votre propre compte)'}</label>
+                      <select name="roleId" defaultValue={u.roleId} className="input">{roles.map((r) => <option key={r.id} value={r.id} disabled={u.id === me.id && r.id !== u.roleId}>{r.name}</option>)}</select></div>
+                    <div><label className="label">Nouveau mot de passe (laisser vide = inchangé)</label><input name="password" type="password" autoComplete="new-password" placeholder="10 car. min., lettre + chiffre" className="input" /></div>
+                    <button className="btn btn-sm md:col-span-2">Enregistrer les modifications</button>
+                  </form>
+                </details>
               </td></tr>
           ))}</tbody></table>
       </div>

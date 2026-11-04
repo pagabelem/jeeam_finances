@@ -5,7 +5,7 @@ import { db } from '@/lib/db';
 import { requirePage } from '@/lib/session';
 import { open } from '@/lib/secretbox';
 import { otpauthUri } from '@/lib/totp';
-import { changePassword, startTotpSetup, confirmTotp, regenerateRecovery, disableTotp } from '@/actions/account';
+import { updateMyName, changePassword, startTotpSetup, confirmTotp, regenerateRecovery, disableTotp } from '@/actions/account';
 import { Flash } from '@/components/ui';
 
 export const dynamic = 'force-dynamic';
@@ -42,6 +42,16 @@ export default async function Profile({ searchParams }: { searchParams: { error?
           <div className="grid grid-cols-2 gap-2 font-mono text-sm">{codes.map((c) => <div key={c} className="rounded bg-slate-100 px-3 py-1">{c}</div>)}</div>
         </div>
       )}
+
+      <form action={updateMyName} className="card space-y-3">
+        <h2 className="font-semibold">Informations personnelles</h2>
+        <div className="grid gap-3 md:grid-cols-2">
+          <div><label className="label">Nom</label><input name="name" required minLength={2} maxLength={80} defaultValue={me.name} className="input" /></div>
+          <div><label className="label">E-mail (identifiant de connexion)</label><input value={me.email} disabled readOnly className="input bg-slate-100 text-slate-500" /></div>
+        </div>
+        <p className="text-xs text-slate-500">L’e-mail et le rôle ne peuvent être modifiés que par le Commissaire aux comptes (Administration &gt; Utilisateurs).</p>
+        <button className="btn">Enregistrer le nom</button>
+      </form>
 
       <form action={changePassword} className="card space-y-3">
         <h2 className="font-semibold">Mot de passe</h2>

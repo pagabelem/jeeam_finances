@@ -18,6 +18,20 @@ function flashCodes(codes: string[]) {
 
 const pwd = z.string().min(10, 'Mot de passe : 10 caractères minimum').regex(/[A-Za-z]/, 'Mot de passe : au moins une lettre').regex(/\d/, 'Mot de passe : au moins un chiffre');
 
+/** Chaque utilisateur peut modifier son propre nom. L'e-mail et le rôle ne sont modifiables que par un administrateur (admin.users : Commissaire aux comptes). */
+export async function updateMyName(fd: FormData) {
+  await act('/profil', async () => {
+    const me = await requireAction();
+    const r = z.string().trim().min(2, 'Nom : 2 caractères minimum').max(80, 'Nom : 80 caractères maximum').safeParse(fd.get('name'));
+    if (!r.success) throw new AppError(r.error.issues[0].message);
+    if (r.data === me.name) throw new AppError('Aucune modification détectée.');
+    await db.user.update({ where: { id: me.id }, data: { name: r.data } });
+    await audit({ userId: me.id, action: 'PROFILE_UPDATE', entity: 'User', entityId: me.id, before: { name: me.name }, after: { name: r.data } });
+    revalidatePath('/', 'layout');
+    return ok('/profil', 'Nom modifié');
+  });
+}
+
 export async function changePassword(fd: FormData) {
   await act('/profil', async () => {
     const me = await requireAction();

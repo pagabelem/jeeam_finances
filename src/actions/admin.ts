@@ -178,3 +178,50 @@ export async function markNotificationsRead() {
   await db.notification.updateMany({ where: { userId: me.id, readAt: null }, data: { readAt: new Date() } });
   revalidatePath('/', 'layout');
 }
+
+/** Modification complète d'un utilisateur : nom, e-mail, rôle et (facultatif) nouveau mot de passe. */
+export async function updateUser(id: string, fd: FormData) {
+  await act('/admin/utilisateurs', async () => {
+    const me = await requireAction('admin.users');
+    const r = z.object({
+      name: z.string().trim().min(2, 'Nom requis'),
+      email: z.string().trim().toLowerCase().email('E-mail invalide'),
+      roleId: z.string().min(1, 'Rôle requis'),
+    }).safeParse(Object.fromEntries(fd));
+    if (!r.success) return first(r);
+    const newPwd = String(fd.get('password') ?? '');
+    if (newPwd) { const p = pwd.safeParse(newPwd); if (!p.success) return first(p); }
+    const u = await db.user.findUnique({ where: { id } });
+    if (!u) throw new AppError('Utilisateur introuvable.');
+    if (u.id === me.id && r.data.roleId !== u.roleId) throw new AppError('Vous ne pouvez pas modifier votre propre rôle.');
+    const role = await db.role.findUnique({ where: { id: r.data.roleId } });
+    if (!role) throw new AppError('Rôle introuvable.');
+    if (r.data.email !== u.email && (await db.user.findUnique({ where: { email: r.data.email } }))) throw new AppError('E-mail déjà utilisé par un autre compte.');
+    const data: Record<string, unknown> = { name: r.data.name, email: r.data.email, roleId: r.data.roleId };
+    if (newPwd) Object.assign(data, { passwordHash: await bcrypt.hash(newPwd, 12), failedAttempts: 0, lockedUntil: null, mustChangePassword: u.id !== me.id });
+    await db.user.update({ where: { id }, data });
+    await audit({ userId: me.id, action: 'USER_UPDATE', entity: 'User', entityId: id,
+      before: { name: u.name, email: u.email, roleId: u.roleId }, after: { name: r.data.name, email: r.data.email, roleId: r.data.roleId, motDePasseModifie: !!newPwd } });
+    revalidatePath('/', 'layout');
+    return ok('/admin/utilisateurs', 'Utilisateur modifié');
+  });
+}
+
+export async function updateRegion(id: string, fd: FormData) {
+  await act('/admin/regions', async () => {
+    const me = await requireAnyAction(['admin.regions', 'regions.manage']);
+    const r = z.object({ name: z.string().trim().min(2, 'Nom requis'), zone: z.string().trim().optional(), contactName: z.string().trim().optional(), contactPhone: z.string().trim().optional() })
+      .safeParse(Object.fromEntries(fd));
+    if (!r.success) return first(r);
+    const before = await db.region.findUnique({ where: { id } });
+    if (!before) throw new AppError('Région introuvable.');
+    const clash = await db.region.findUnique({ where: { name: r.data.name } });
+    if (clash && clash.id !== id) throw new AppError('Une autre région porte déjà ce nom.');
+    const after = await db.region.update({ where: { id }, data: { name: r.data.name, zone: r.data.zone || null, contactName: r.data.contactName || null, contactPhone: r.data.contactPhone || null } });
+    await audit({ userId: me.id, action: 'REGION_UPDATE', entity: 'Region', entityId: id,
+      before: { name: before.name, zone: before.zone, contactName: before.contactName, contactPhone: before.contactPhone },
+      after: { name: after.name, zone: after.zone, contactName: after.contactName, contactPhone: after.contactPhone } });
+    revalidatePath('/', 'layout');
+    return ok('/admin/regions', 'Région modifiée');
+  });
+}

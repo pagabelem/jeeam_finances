@@ -1,6 +1,6 @@
 import { db } from '@/lib/db';
 import { requirePage } from '@/lib/session';
-import { createRegion, toggleRegion } from '@/actions/admin';
+import { createRegion, toggleRegion, updateRegion } from '@/actions/admin';
 import { Badge, Field, Flash } from '@/components/ui';
 
 export default async function Regions({ searchParams }: { searchParams: { error?: string; ok?: string } }) {
@@ -18,7 +18,21 @@ export default async function Regions({ searchParams }: { searchParams: { error?
       <div className="card overflow-x-auto p-0"><table className="tbl"><thead><tr><th>Nom</th><th>Zone</th><th>Contact</th><th /></tr></thead>
         <tbody>{regions.map((r) => (
           <tr key={r.id}><td>{r.name} {!r.active && <Badge>inactive</Badge>}</td><td>{r.zone ?? '—'}</td><td>{r.contactName ?? '—'} {r.contactPhone}</td>
-            <td><form action={toggleRegion.bind(null, r.id)}><button className="btn-sec btn-sm">{r.active ? 'Désactiver' : 'Réactiver'}</button></form></td></tr>
+            <td className="space-y-2">
+              <div className="flex gap-2">
+                <form action={toggleRegion.bind(null, r.id)}><button className="btn-sec btn-sm">{r.active ? 'Désactiver' : 'Réactiver'}</button></form>
+              </div>
+              <details>
+                <summary className="cursor-pointer text-sm text-brand-700 underline">Modifier</summary>
+                <form action={updateRegion.bind(null, r.id)} className="mt-2 grid gap-2 md:grid-cols-2">
+                  <input name="name" required defaultValue={r.name} placeholder="Église / région" className="input" />
+                  <input name="zone" defaultValue={r.zone ?? ''} placeholder="Zone" className="input" />
+                  <input name="contactName" defaultValue={r.contactName ?? ''} placeholder="Contact" className="input" />
+                  <input name="contactPhone" defaultValue={r.contactPhone ?? ''} placeholder="Téléphone" className="input" />
+                  <button className="btn btn-sm md:col-span-2">Enregistrer</button>
+                </form>
+              </details>
+            </td></tr>
         ))}</tbody></table></div>
     </>
   );
