@@ -8,6 +8,7 @@ export const PERMISSIONS: { key: string; label: string; group: string }[] = [
   { key: 'balance.request', label: 'Demander la modification du solde d’un compte', group: 'Trésorerie' },
   { key: 'balance.approve', label: 'Autoriser une modification de solde (chaque rôle doit autoriser)', group: 'Trésorerie' },
   { key: 'balance.apply', label: 'Appliquer une modification de solde autorisée', group: 'Trésorerie' },
+  { key: 'activities.settle', label: 'Clôturer une activité (devis vs dépenses réelles, notification du bureau)', group: 'Activités' },
   { key: 'transactions.cancel', label: 'Annuler une opération (motif obligatoire)', group: 'Trésorerie' },
   { key: 'income.record', label: 'Enregistrer des recettes', group: 'Trésorerie' },
   { key: 'expenses.request', label: 'Créer des demandes de dépense', group: 'Dépenses' },
@@ -41,19 +42,19 @@ export const DEFAULT_ROLES: { key: string; name: string; perms: string[] }[] = [
   { key: 'SECRETAIRE_ADJOINTE', name: 'Secrétaire adjointe', perms: ['activities.view', 'activities.manage'] },
   {
     key: 'TRESORIERE', name: 'Trésorière',
-    perms: [...READ, 'accounts.manage', 'categories.manage', 'regions.manage', 'balance.request', 'balance.apply', 'transactions.edit', 'transactions.cancel', 'income.record', 'expenses.request',
+    perms: [...READ, 'accounts.manage', 'categories.manage', 'regions.manage', 'balance.request', 'balance.apply', 'activities.settle', 'transactions.edit', 'transactions.cancel', 'income.record', 'expenses.request',
       'expenses.approve', 'expenses.pay', 'attachments.upload', 'activities.manage', 'observations.respond', 'ai.use'],
   },
   {
     key: 'CAC', name: 'Commissaire aux comptes',
-    perms: [...READ, 'categories.manage', 'regions.manage', 'balance.approve', 'audit.view', 'audit.control', 'audit.observe', 'audit.lock', 'ai.use',
+    perms: [...READ, 'categories.manage', 'regions.manage', 'balance.approve', 'expenses.request', 'expenses.approve', 'audit.view', 'audit.control', 'audit.observe', 'audit.lock', 'ai.use',
       'admin.users', 'admin.roles', 'admin.regions', 'admin.auditlog', 'admin.settings'],
   },
 ];
 
 /** Permissions opérationnelles que le Commissaire aux comptes ne doit JAMAIS détenir (garde-fou en dur). */
 export const AUDITOR_FORBIDDEN = [
-  'income.record', 'expenses.request', 'expenses.approve', 'expenses.pay', 'transactions.edit', 'transactions.cancel', 'attachments.upload', 'accounts.manage', 'balance.request', 'balance.apply',
+  'income.record', 'expenses.pay', 'transactions.edit', 'transactions.cancel', 'attachments.upload', 'accounts.manage', 'balance.request', 'balance.apply', 'activities.settle',
 ];
 
 /** Rôles pour lesquels la double authentification (TOTP) est obligatoire. */

@@ -6,8 +6,8 @@ import { db } from '@/lib/db';
 import { act, AppError, ok } from '@/lib/errors';
 import { requireAction, forbidAuditor, type CurrentUser } from '@/lib/session';
 import { audit } from '@/lib/audit';
-import { assertPeriodOpen, nextReference, getThreshold, getDoubleThreshold, notifyPerm, notifyUsers, accountBalances, budgetCheck } from '@/lib/domain';
-import { requiredApprovals, approvalBlock, editPolicy } from '@/lib/workflow';
+import { assertPeriodOpen, nextReference, getThreshold, getDoubleThreshold, notifyPerm, notifyUsers, notifyApprovers, notifyAll, accountBalances, budgetCheck } from '@/lib/domain';
+import { requiredApprovals, approvalBlock, editPolicy, routingBlock, describeVariance } from '@/lib/workflow';
 import { saveFile, hasFile } from '@/lib/storage';
 import { num, mad, iso } from '@/lib/format';
 
@@ -87,7 +87,7 @@ async function submitTx(tx: Prisma.TransactionClient, id: string, user: CurrentU
   await tx.approval.create({ data: { transactionId: id } });
   await audit({ userId: user.id, action: 'TX_SUBMIT', entity: 'Transaction', entityId: id, before: { status: 'DRAFT' }, after: { status: 'PENDING_APPROVAL', budget: b } }, tx);
   const warn = b?.over ? ` ⚠ Dépassement budgétaire (reste ${mad(b.remaining)}).` : b?.noLine ? ' ⚠ Aucune ligne budgétaire pour cette catégorie.' : '';
-  await notifyPerm(tx, 'expenses.approve', { title: 'Dépense à autoriser', body: `${t.reference} — ${mad(t.amountMad)}.${warn}`, link: `/depenses/${id}` }, user.id);
+  await notifyApprovers(tx, user.roleKey, { title: 'Devis à autoriser', body: `${t.reference} — ${mad(t.amountMad)}.${warn}`, link: `/depenses/${id}` }, [user.id]);
 }
 
 export async function createIncome(fd: FormData) {
@@ -103,7 +103,6 @@ export async function createIncome(fd: FormData) {
 export async function createExpense(fd: FormData) {
   await act('/depenses/nouvelle', async () => {
     const user = await requireAction('expenses.request');
-    forbidAuditor(user);
     const id = await createTx('EXPENSE', fd, user, fd.get('intent') === 'submit');
     revalidatePath('/', 'layout');
     return ok(`/depenses/${id}`, fd.get('intent') === 'submit' ? 'Demande soumise pour autorisation' : 'Brouillon enregistré');
@@ -113,7 +112,6 @@ export async function createExpense(fd: FormData) {
 export async function submitExpense(id: string) {
   await act(`/depenses/${id}`, async () => {
     const user = await requireAction('expenses.request');
-    forbidAuditor(user);
     await db.$transaction((tx) => submitTx(tx, id, user));
     revalidatePath('/', 'layout');
     return ok(`/depenses/${id}`, 'Demande soumise');
@@ -123,13 +121,12 @@ export async function submitExpense(id: string) {
 export async function decideExpense(id: string, fd: FormData) {
   await act(`/depenses/${id}`, async () => {
     const user = await requireAction('expenses.approve');
-    forbidAuditor(user);
     const decision = fd.get('decision') === 'APPROVED' ? 'APPROVED' : 'REJECTED';
     const comment = String(fd.get('comment') ?? '').trim();
     if (decision === 'REJECTED' && !comment) throw new AppError('Un motif est obligatoire pour refuser.');
     let msg = decision === 'APPROVED' ? 'Dépense autorisée' : 'Dépense refusée';
     await db.$transaction(async (tx) => {
-      const t = await tx.transaction.findUnique({ where: { id } });
+      const t = await tx.transaction.findUnique({ where: { id }, include: { createdBy: { include: { role: true } } } });
       if (!t || t.type !== 'EXPENSE') throw new AppError('Dépense introuvable.');
       if (t.status !== 'PENDING_APPROVAL') throw new AppError('Cette dépense n’est pas en attente d’autorisation.');
       await assertPeriodOpen(t.transactionDate, tx);
@@ -137,6 +134,9 @@ export async function decideExpense(id: string, fd: FormData) {
       const required = requiredApprovals(num(t.amountMad), dbl);
       const approvals = await tx.approval.findMany({ where: { transactionId: id, supersededAt: null }, orderBy: { createdAt: 'asc' } });
       const approvedBy = approvals.filter((a) => a.decision === 'APPROVED' && a.approverId).map((a) => a.approverId!);
+      // Routage : la demande de la Trésorière n'est autorisée que par le CAC ; toute autre demande (CAC compris) que par la Trésorière.
+      const route = routingBlock(approvedBy.length + 1, user.roleKey, t.createdBy.role.key);
+      if (route) throw new AppError(route);
       if (decision === 'APPROVED') {
         const block = approvalBlock({ userId: user.id, creatorId: t.createdById, amountMad: num(t.amountMad), threshold, doubleThreshold: dbl, approvedBy });
         if (block) throw new AppError(block.includes('seuil') ? block.replace('du seuil', `de ${mad(threshold)}`) : block);
@@ -164,38 +164,71 @@ export async function decideExpense(id: string, fd: FormData) {
         before: { status: t.status }, after: { status, niveau: `${level}/${required}` }, reason: comment || null }, tx);
       await notifyUsers(tx, [t.createdById], { title: decision === 'APPROVED' ? 'Dépense autorisée' : 'Dépense refusée',
         body: `${t.reference}${comment ? ' — ' + comment : ''}`, link: `/depenses/${id}` });
-      if (decision === 'APPROVED') await notifyPerm(tx, 'expenses.pay', { title: 'Dépense autorisée : à payer (montant engagé sur le compte)', body: `${t.reference} — ${mad(t.amountMad)}`, link: `/depenses/${id}` });
+      if (decision === 'APPROVED') await notifyPerm(tx, 'expenses.pay', { title: 'Devis autorisé : dépenses réelles à enregistrer (montant engagé sur le compte)', body: `${t.reference} — ${mad(t.amountMad)}`, link: `/depenses/${id}` });
     });
     revalidatePath('/', 'layout');
     return ok(`/depenses/${id}`, msg);
   });
 }
 
+/**
+ * Facturation : la Trésorière enregistre la dépense RÉELLE d'un devis autorisé. Le compte est débité du montant réel (et non du devis).
+ * L'écart devis / réel est conservé, justifié, et notifié à tous les membres du bureau.
+ */
 export async function payExpense(id: string, fd: FormData) {
   await act(`/depenses/${id}`, async () => {
     const user = await requireAction('expenses.pay');
     forbidAuditor(user);
     const bankReference = String(fd.get('bankReference') ?? '').trim();
     const proof = fd.get('proof');
+    const reason = String(fd.get('varianceReason') ?? '').trim();
+    const rawActual = String(fd.get('actualAmount') ?? '').replace(/\s/g, '').replace(',', '.');
     // La référence bancaire déjà saisie à la demande compte aussi : il faut au moins une référence ou une preuve.
     const known = await db.transaction.findUnique({ where: { id }, select: { bankReference: true } });
     if (!hasFile(proof) && !bankReference && !known?.bankReference) throw new AppError('Joignez la preuve de paiement ou saisissez la référence bancaire.');
     const saved = hasFile(proof) ? await saveFile(proof) : null;
+    let msg = 'Dépenses réelles enregistrées : le compte est débité';
     await db.$transaction(async (tx) => {
-      const t = await tx.transaction.findUnique({ where: { id } });
+      const t = await tx.transaction.findUnique({ where: { id }, include: { activity: true } });
       if (!t || t.type !== 'EXPENSE') throw new AppError('Dépense introuvable.');
-      if (t.status !== 'APPROVED') throw new AppError('Seule une dépense autorisée peut être payée.');
+      if (t.status !== 'APPROVED') throw new AppError('Seul un devis autorisé peut être facturé.');
       if (!t.validatedById) throw new AppError('Autorisation manquante.');
       await assertPeriodOpen(t.transactionDate, tx);
+      const actual = rawActual === '' ? num(t.amount) : Number(rawActual);
+      if (!Number.isFinite(actual) || actual <= 0) throw new AppError('Montant réel invalide.');
+      const rate = num(t.exchangeRate);
+      const actualMad = Math.round(actual * rate * 100) / 100;
+      const quote = num(t.amount), quoteMad = num(t.amountMad);
+      const v = describeVariance(quoteMad, actualMad);
+      if (v.kind !== 'EQUAL' && reason.length < 5) throw new AppError('Le montant réel diffère du devis : indiquez le motif de l’écart (5 caractères min.).');
       const bal = (await accountBalances()).find((a) => a.id === t.accountId);
-      if (bal && bal.balance < num(t.amountMad)) throw new AppError(`Solde comptable insuffisant sur « ${bal.name} » (${mad(bal.balance)}) pour payer ${mad(t.amountMad)}.`);
-      await tx.transaction.update({ where: { id }, data: { status: 'PAID', paidById: user.id, paidAt: new Date(), bankReference: bankReference || t.bankReference } });
+      // Le devis est déjà « engagé » : on compare le solde comptable au montant réel à débiter.
+      if (bal && bal.balance < actualMad) throw new AppError(`Solde comptable insuffisant sur « ${bal.name} » (${mad(bal.balance)}) pour enregistrer ${mad(actualMad)}.`);
+      await tx.transaction.update({ where: { id }, data: {
+        status: 'PAID', paidById: user.id, paidAt: new Date(), bankReference: bankReference || t.bankReference,
+        quoteAmount: t.quoteAmount ?? quote, quoteAmountMad: t.quoteAmountMad ?? quoteMad,
+        amount: actual, amountMad: actualMad, varianceReason: v.kind === 'EQUAL' ? null : reason,
+      } });
       if (saved) await tx.attachment.create({ data: { transactionId: id, kind: 'TRANSFER_PROOF', fileName: saved.name, mimeType: saved.mime, size: saved.size, storageKey: saved.key, uploadedById: user.id } });
-      await audit({ userId: user.id, action: 'TX_PAY', entity: 'Transaction', entityId: id, before: { status: 'APPROVED' }, after: { status: 'PAID', bankReference } }, tx);
-      await notifyPerm(tx, 'audit.control', { title: 'Opération à contrôler', body: `${t.reference} payée — ${mad(t.amountMad)}`, link: `/depenses/${id}` });
+      await audit({ userId: user.id, action: 'TX_PAY', entity: 'Transaction', entityId: id,
+        before: { status: 'APPROVED', devisMad: quoteMad }, after: { status: 'PAID', reelMad: actualMad, ecartMad: v.diff, bankReference }, reason: v.kind === 'EQUAL' ? null : reason }, tx);
+      await notifyPerm(tx, 'audit.control', { title: 'Opération à contrôler', body: `${t.reference} payée — ${mad(actualMad)}`, link: `/depenses/${id}` });
+
+      // Notification de TOUT le bureau : devis vs dépense réelle.
+      const where = t.activity ? ` (activité « ${t.activity.name} »)` : '';
+      const head = v.kind === 'EQUAL' ? 'Dépense conforme au devis' : v.kind === 'OVER' ? `Dépense supérieure au devis de ${mad(v.diff)}` : `Dépense inférieure au devis de ${mad(Math.abs(v.diff))}`;
+      await notifyAll(tx, { title: `${head} — ${t.reference}`,
+        body: `${t.description}${where} : devis ${mad(quoteMad)}, dépense réelle ${mad(actualMad)}${v.kind === 'EQUAL' ? ' — aucune différence.' : ` — ${v.kind === 'OVER' ? '+' : '−'}${mad(Math.abs(v.diff))}${v.pct != null ? ` (${v.pct > 0 ? '+' : ''}${v.pct} %)` : ''}. Motif : ${reason}`}`,
+        link: `/depenses/${id}` });
+      if (v.kind === 'OVER' && v.pct != null && v.pct > 10) {
+        await tx.aiInsight.create({ data: { kind: 'QUOTE_VARIANCE:' + id, severity: v.pct > 30 ? 'CRITICAL' : 'WARNING', title: 'Dépense supérieure au devis',
+          message: `${t.reference} : devis ${mad(quoteMad)}, réel ${mad(actualMad)} (+${v.pct} %). Motif : ${reason}`, transactionId: id } });
+      }
+      if (v.kind !== 'EQUAL') msg = `Dépenses réelles enregistrées (${v.kind === 'OVER' ? '+' : '−'}${mad(Math.abs(v.diff))} par rapport au devis) : le compte est débité du montant réel et le bureau est notifié`;
+      else msg = 'Dépenses réelles enregistrées, conformes au devis : le compte est débité et le bureau est notifié';
     });
     revalidatePath('/', 'layout');
-    return ok(`/depenses/${id}`, 'Paiement enregistré : le compte est débité');
+    return ok(`/depenses/${id}`, msg);
   });
 }
 
@@ -252,7 +285,6 @@ const FINANCIAL = ['amount', 'currency', 'rate', 'date', 'categoryId', 'accountI
 export async function updateTransaction(id: string, fd: FormData) {
   await act(`/depenses/${id}/modifier`, async () => {
     const user = await requireAction();
-    forbidAuditor(user);
     const d = parse(fd);
     const reason = String(fd.get('reason') ?? '').trim();
     let msg = 'Opération modifiée';
@@ -293,7 +325,8 @@ export async function updateTransaction(id: string, fd: FormData) {
         await tx.approval.updateMany({ where: { transactionId: id, supersededAt: null }, data: { supersededAt: new Date() } });
         await tx.approval.create({ data: { transactionId: id, level: 1 } });
         const b = await budgetCheck(d.activityId ?? null, d.categoryId, d.amountMad, id);
-        await notifyPerm(tx, 'expenses.approve', { title: 'Dépense modifiée : nouvelle autorisation requise', body: `${t.reference} — ${mad(d.amountMad)}${b?.over ? ' ⚠ dépassement budgétaire' : ''}`, link: `/depenses/${id}` }, user.id);
+        const creator = await tx.user.findUnique({ where: { id: t.createdById }, include: { role: true } });
+        await notifyApprovers(tx, creator?.role.key ?? '', { title: 'Devis modifié : nouvelle autorisation requise', body: `${t.reference} — ${mad(d.amountMad)}${b?.over ? ' ⚠ dépassement budgétaire' : ''}`, link: `/depenses/${id}` }, [user.id]);
         msg = 'Opération modifiée : les autorisations précédentes sont annulées, une nouvelle autorisation est requise';
       }
       const changed = (o: Record<string, unknown>) => Object.fromEntries(keys.map((k) => [k, o[k]]));

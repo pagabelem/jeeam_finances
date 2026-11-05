@@ -5,6 +5,9 @@ import { db } from '@/lib/db';
 import { act, AppError, ok } from '@/lib/errors';
 import { requireAction, forbidAuditor } from '@/lib/session';
 import { audit } from '@/lib/audit';
+import { notifyAll } from '@/lib/domain';
+import { describeVariance } from '@/lib/workflow';
+import { mad, num } from '@/lib/format';
 
 const opt = z.string().optional().transform((v) => v || undefined);
 
@@ -74,5 +77,38 @@ export async function setActivityStatus(id: string, fd: FormData) {
       await audit({ userId: me.id, action: 'ACTIVITY_STATUS', entity: 'Activity', entityId: id, before: { status: a.status }, after: { status } }, tx);
     });
     return ok(`/activites/${id}`, 'Statut mis à jour');
+  });
+}
+
+/**
+ * Clôture d'une activité : compare le total des devis autorisés au total des dépenses réelles enregistrées,
+ * puis notifie TOUS les membres du bureau (aucune différence / X de plus / X de moins, et situation vs budget prévisionnel).
+ */
+export async function closeActivity(id: string) {
+  await act(`/activites/${id}`, async () => {
+    const me = await requireAction('activities.settle');
+    forbidAuditor(me);
+    await db.$transaction(async (tx) => {
+      const a = await tx.activity.findUnique({ where: { id }, include: { budgets: { include: { lines: true } } } });
+      if (!a) throw new AppError('Activité introuvable.');
+      if (a.settledAt) throw new AppError('Cette activité est déjà clôturée.');
+      const open = await tx.transaction.count({ where: { activityId: id, type: 'EXPENSE', status: { in: ['DRAFT', 'PENDING_APPROVAL', 'APPROVED'] } } });
+      if (open) throw new AppError(`${open} dépense(s) de cette activité ne sont pas encore réglées (brouillon, en attente ou autorisée) : enregistrez les dépenses réelles ou annulez-les avant de clôturer.`);
+      const paid = await tx.transaction.findMany({ where: { activityId: id, type: 'EXPENSE', status: { in: ['PAID', 'CONTROLLED'] } }, select: { amountMad: true, quoteAmountMad: true } });
+      const quote = paid.reduce((s, t) => s + num(t.quoteAmountMad ?? t.amountMad), 0);
+      const actual = paid.reduce((s, t) => s + num(t.amountMad), 0);
+      const planned = a.budgets.flatMap((b) => b.lines).reduce((s, l) => s + num(l.planned), 0);
+      const v = describeVariance(quote, actual);
+      await tx.activity.update({ where: { id }, data: { status: 'COMPLETED', settledAt: new Date(), settledById: me.id, quoteTotalMad: quote, actualTotalMad: actual } });
+      await audit({ userId: me.id, action: 'ACTIVITY_SETTLE', entity: 'Activity', entityId: id,
+        before: { status: a.status }, after: { status: 'COMPLETED', devisMad: quote, reelMad: actual, ecartMad: v.diff, budgetPrevuMad: planned } }, tx);
+      const verdict = v.kind === 'EQUAL' ? 'aucune différence entre le devis et les dépenses réelles'
+        : v.kind === 'OVER' ? `les dépenses réelles dépassent le devis de ${mad(v.diff)}${v.pct != null ? ` (+${v.pct} %)` : ''}`
+        : `les dépenses réelles sont inférieures au devis de ${mad(Math.abs(v.diff))}${v.pct != null ? ` (${v.pct} %)` : ''}`;
+      const budget = planned > 0 ? ` Budget prévisionnel : ${mad(planned)} (${actual <= planned ? `reste ${mad(planned - actual)}` : `dépassement de ${mad(actual - planned)}`}).` : '';
+      await notifyAll(tx, { title: `Activité clôturée : ${a.name}`, body: `Devis ${mad(quote)} · dépenses réelles ${mad(actual)} : ${verdict}.${budget}`, link: `/activites/${id}` });
+    });
+    revalidatePath('/', 'layout');
+    return ok(`/activites/${id}`, 'Activité clôturée : le bureau est notifié');
   });
 }

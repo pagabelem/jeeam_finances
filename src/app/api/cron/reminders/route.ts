@@ -1,5 +1,5 @@
 import { db } from '@/lib/db';
-import { getSettingNumber, notifyOnce, usersWithPerm } from '@/lib/domain';
+import { getSettingNumber, notifyOnce, usersWithPerm, approverIds } from '@/lib/domain';
 import { mad } from '@/lib/format';
 
 // Rappels planifiés (1×/jour) : Authorization: Bearer $CRON_SECRET
@@ -13,14 +13,14 @@ export async function GET(req: Request) {
   const ago = (n: number) => new Date(Date.now() - n * 86_400_000);
   const sent = { pending: 0, toPay: 0, toControl: 0, observations: 0, contributions: 0, balance: 0 };
 
-  const [approvers, payers, controllers] = await Promise.all([usersWithPerm(db, 'expenses.approve'), usersWithPerm(db, 'expenses.pay'), usersWithPerm(db, 'audit.control')]);
+  const [payers, controllers] = await Promise.all([usersWithPerm(db, 'expenses.pay'), usersWithPerm(db, 'audit.control')]);
   // 1. Dépenses en attente d'autorisation
-  for (const t of await db.transaction.findMany({ where: { type: 'EXPENSE', status: 'PENDING_APPROVAL', updatedAt: { lt: ago(days) } }, take: 100 })) {
-    sent.pending += await notifyOnce(db, approvers.filter((u) => u !== t.createdById), { title: 'Rappel : dépense en attente d’autorisation', body: `${t.reference} — ${mad(t.amountMad)}`, link: `/depenses/${t.id}` }, days);
+  for (const t of await db.transaction.findMany({ where: { type: 'EXPENSE', status: 'PENDING_APPROVAL', updatedAt: { lt: ago(days) } }, include: { createdBy: { include: { role: true } } }, take: 100 })) {
+    sent.pending += await notifyOnce(db, (await approverIds(db, t.createdBy.role.key)).filter((u) => u !== t.createdById), { title: 'Rappel : dépense en attente d’autorisation', body: `${t.reference} — ${mad(t.amountMad)}`, link: `/depenses/${t.id}` }, days);
   }
   // 2. Dépenses autorisées non payées
   for (const t of await db.transaction.findMany({ where: { type: 'EXPENSE', status: 'APPROVED', validatedAt: { lt: ago(days) } }, take: 100 })) {
-    sent.toPay += await notifyOnce(db, payers, { title: 'Rappel : dépense autorisée à payer', body: `${t.reference} — ${mad(t.amountMad)}`, link: `/depenses/${t.id}` }, days);
+    sent.toPay += await notifyOnce(db, payers, { title: 'Rappel : devis autorisé, dépenses réelles à enregistrer', body: `${t.reference} — ${mad(t.amountMad)}`, link: `/depenses/${t.id}` }, days);
   }
   // 3. Opérations payées non contrôlées
   for (const t of await db.transaction.findMany({ where: { status: 'PAID', updatedAt: { lt: ago(days * 2) } }, take: 100 })) {

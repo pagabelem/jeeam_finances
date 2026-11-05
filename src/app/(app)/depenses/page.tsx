@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { db } from '@/lib/db';
 import { requirePage } from '@/lib/session';
 import { mad, dt } from '@/lib/format';
+import { approverRoleFor } from '@/lib/workflow';
 import { Flash, PageHeader, StatusBadge, Tabs, Empty } from '@/components/ui';
 
 const TABS = [
@@ -11,10 +12,10 @@ const TABS = [
 ];
 
 /** Action attendue de l'utilisateur sur une dépense, selon son statut et ses permissions (le bouton ouvre la fiche où l'action se fait). */
-function nextAction(status: string, perms: Set<string>): string | null {
+function nextAction(status: string, perms: Set<string>, roleKey: string, requesterRoleKey: string): string | null {
   if (status === 'DRAFT' && perms.has('expenses.request')) return 'Soumettre';
-  if (status === 'PENDING_APPROVAL' && perms.has('expenses.approve')) return 'Autoriser / refuser';
-  if (status === 'APPROVED' && perms.has('expenses.pay')) return 'Payer';
+  if (status === 'PENDING_APPROVAL' && perms.has('expenses.approve') && roleKey === approverRoleFor(requesterRoleKey)) return 'Autoriser / refuser';
+  if (status === 'APPROVED' && perms.has('expenses.pay')) return 'Dépenses réelles';
   if (status === 'PAID' && perms.has('audit.control')) return 'Contrôler';
   return null;
 }
@@ -24,7 +25,7 @@ export default async function Expenses({ searchParams }: { searchParams: { s?: s
   const s = searchParams.s;
   const rows = await db.transaction.findMany({
     where: { type: 'EXPENSE', ...(s ? { status: s as never } : {}) }, orderBy: { createdAt: 'desc' }, take: 100,
-    include: { category: true, activity: true, createdBy: true },
+    include: { category: true, activity: true, createdBy: { include: { role: true } } },
   });
   return (
     <>
@@ -42,7 +43,7 @@ export default async function Expenses({ searchParams }: { searchParams: { s?: s
               <td>{t.category.name}<div className="text-xs text-slate-400">{t.activity?.name}</div></td>
               <td>{t.createdBy.name}</td><td className="text-right font-medium">{mad(t.amountMad)}</td><td><StatusBadge status={t.status} /></td>
               <td>{(() => {
-                const a = nextAction(t.status, user.perms);
+                const a = nextAction(t.status, user.perms, user.roleKey, t.createdBy.role.key);
                 return a ? <Link href={`/depenses/${t.id}`} className="btn btn-sm whitespace-nowrap">{a}</Link> : <Link href={`/depenses/${t.id}`} className="text-xs text-slate-400 underline">Voir</Link>;
               })()}</td>
             </tr>

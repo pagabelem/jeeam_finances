@@ -49,3 +49,24 @@ export function adjustmentOutcome(decisions: AdjDecision[]): 'REJECTED' | 'APPRO
   if (decisions.length > 0 && decisions.every((d) => d === 'APPROVED')) return 'APPROVED';
   return 'PENDING';
 }
+
+// ───────────── Qui autorise une dépense : dépend du rôle du DEMANDEUR ─────────────
+/** Demande de la Trésorière → autorisée uniquement par le Commissaire aux comptes ; toute autre demande (y compris celle du CAC) → uniquement la Trésorière. */
+export const APPROVER_BY_REQUESTER: Record<string, string> = { TRESORIERE: 'CAC' };
+export const DEFAULT_APPROVER_ROLE = 'TRESORIERE';
+export const approverRoleFor = (requesterRoleKey: string) => APPROVER_BY_REQUESTER[requesterRoleKey] ?? DEFAULT_APPROVER_ROLE;
+const ROLE_LABEL: Record<string, string> = { CAC: 'le Commissaire aux comptes', TRESORIERE: 'la Trésorière' };
+
+/** Message d'erreur si `userRoleKey` n'a pas le droit d'autoriser ce niveau. Niveau 1 : rôle imposé. Niveau 2 (double validation) : tout détenteur de expenses.approve distinct. */
+export function routingBlock(level: number, userRoleKey: string, requesterRoleKey: string): string | null {
+  if (level > 1) return null;
+  const need = approverRoleFor(requesterRoleKey);
+  return userRoleKey === need ? null : `Cette demande doit être autorisée par ${ROLE_LABEL[need] ?? need}.`;
+}
+
+// ───────────── Devis vs dépense réelle ─────────────
+export type Variance = { diff: number; kind: 'EQUAL' | 'OVER' | 'UNDER'; pct: number | null };
+export function describeVariance(quoteMad: number, actualMad: number): Variance {
+  const diff = Math.round((actualMad - quoteMad) * 100) / 100;
+  return { diff, kind: diff === 0 ? 'EQUAL' : diff > 0 ? 'OVER' : 'UNDER', pct: quoteMad ? Math.round((diff / quoteMad) * 1000) / 10 : null };
+}

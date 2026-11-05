@@ -16,6 +16,8 @@ export async function controlTransaction(id: string) {
       const t = await tx.transaction.findUnique({ where: { id }, include: { attachments: { select: { id: true } }, observations: { select: { status: true } } } });
       if (!t) throw new AppError('Opération introuvable.');
       if (t.status !== 'PAID') throw new AppError('Seule une opération payée peut être contrôlée.');
+      // Indépendance du contrôle : on ne contrôle jamais ce qu'on a soi-même demandé ou autorisé.
+      if (t.createdById === user.id || t.validatedById === user.id) throw new AppError('Conflit d’intérêts : vous avez créé ou autorisé cette opération, vous ne pouvez pas la contrôler.');
       if (!t.attachments.length) throw new AppError('Aucun justificatif : ouvrez une observation d’audit plutôt que de valider le contrôle.');
       if (t.observations.some((o) => o.status !== 'CLOSED')) throw new AppError('Une observation non clôturée est rattachée à cette opération.');
       await tx.transaction.update({ where: { id }, data: { status: 'CONTROLLED', controlledById: user.id, controlledAt: new Date() } });

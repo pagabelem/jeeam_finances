@@ -68,3 +68,32 @@ describe('modification de solde : autorisation de chaque rôle', () => {
     expect(adjustmentOutcome([])).toBe('PENDING');
   });
 });
+
+import { approverRoleFor, routingBlock, describeVariance } from '@/lib/workflow';
+describe('qui autorise une dépense', () => {
+  it('demande de la Trésorière → Commissaire aux comptes uniquement', () => {
+    expect(approverRoleFor('TRESORIERE')).toBe('CAC');
+    expect(routingBlock(1, 'CAC', 'TRESORIERE')).toBeNull();
+    expect(routingBlock(1, 'PRESIDENTE', 'TRESORIERE')).toMatch(/Commissaire aux comptes/);
+    expect(routingBlock(1, 'TRESORIERE', 'TRESORIERE')).toMatch(/Commissaire aux comptes/);
+  });
+  it('demande du CAC ou de tout autre rôle → Trésorière uniquement', () => {
+    for (const r of ['CAC', 'PRESIDENTE', 'SECRETAIRE', 'VICE_PRESIDENTE']) {
+      expect(approverRoleFor(r)).toBe('TRESORIERE');
+      expect(routingBlock(1, 'TRESORIERE', r)).toBeNull();
+      expect(routingBlock(1, 'PRESIDENTE', r)).toMatch(/Trésorière/);
+    }
+    expect(routingBlock(1, 'CAC', 'CAC')).toMatch(/Trésorière/);
+  });
+  it('double validation : le 2e niveau n’est pas lié à un rôle précis', () => {
+    expect(routingBlock(2, 'PRESIDENTE', 'TRESORIERE')).toBeNull();
+  });
+});
+
+describe('devis vs dépense réelle', () => {
+  it('aucune différence', () => expect(describeVariance(1000, 1000)).toEqual({ diff: 0, kind: 'EQUAL', pct: 0 }));
+  it('dépense supérieure au devis', () => expect(describeVariance(1000, 1250)).toEqual({ diff: 250, kind: 'OVER', pct: 25 }));
+  it('dépense inférieure au devis', () => expect(describeVariance(1000, 800)).toEqual({ diff: -200, kind: 'UNDER', pct: -20 }));
+  it('arrondi au centime', () => expect(describeVariance(100.1, 100.3).diff).toBe(0.2));
+  it('devis nul : pas de pourcentage', () => expect(describeVariance(0, 50).pct).toBeNull());
+});

@@ -13,7 +13,7 @@ export default async function EditTx({ params, searchParams }: { params: { id: s
   const t = await db.transaction.findUnique({ where: { id: params.id } });
   if (!t) notFound();
   const pol = editPolicy({ status: t.status, type: t.type, isCreator: t.createdById === user.id, canRequest: user.perms.has('expenses.request'), canEdit: user.perms.has('transactions.edit') });
-  if (!pol.allowed || user.roleKey === 'CAC') redirect(`/depenses/${t.id}?error=${encodeURIComponent(pol.why ?? 'Modification non autorisée.')}`);
+  if (!pol.allowed) redirect(`/depenses/${t.id}?error=${encodeURIComponent(pol.why ?? 'Modification non autorisée.')}`);
   const o = await loadOptions(db, t.type);
   const warn = t.type === 'EXPENSE' && (t.status === 'APPROVED' || t.status === 'PENDING_APPROVAL');
   return (

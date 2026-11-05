@@ -49,7 +49,7 @@ async function runTool(name: string, args: Record<string, unknown>, user: NonNul
     return { periode: `${dt(from)} → ${dt(to)}`, recettes: mad(s('INCOME')), depenses: mad(s('EXPENSE')), resultat: mad(s('INCOME') - s('EXPENSE')), depensesEnAttente: pending, depensesSansJustificatif: noProof };
   }
   if (name === 'create_expense_draft') {
-    if (!user.perms.has('expenses.request') || user.roleKey === 'CAC') return { error: 'Vous n’avez pas le droit de créer des dépenses.' };
+    if (!user.perms.has('expenses.request')) return { error: 'Vous n’avez pas le droit de créer des dépenses.' };
     const cat = await db.category.findFirst({ where: { type: 'EXPENSE', active: true, name: { contains: String(args.categoryName), mode: 'insensitive' } } });
     if (!cat) return { error: `Catégorie « ${args.categoryName} » introuvable.` };
     const acc = await db.account.findFirst({ where: { active: true }, orderBy: { name: 'asc' } });

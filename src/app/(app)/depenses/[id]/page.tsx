@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation';
 import { db } from '@/lib/db';
 import { requirePage } from '@/lib/session';
 import { budgetCheck, getThreshold, getDoubleThreshold, accountBalances } from '@/lib/domain';
-import { requiredApprovals, approvalBlock, editPolicy } from '@/lib/workflow';
+import { requiredApprovals, approvalBlock, editPolicy, routingBlock, approverRoleFor, describeVariance } from '@/lib/workflow';
 import { submitExpense, decideExpense, payExpense, cancelTransaction, addAttachment } from '@/actions/transactions';
 import { controlTransaction, openObservation } from '@/actions/audit';
 import { mad, num, dt, dtt, KIND_LABEL, OBS_LABEL } from '@/lib/format';
@@ -14,7 +14,7 @@ export default async function TxDetail({ params, searchParams }: { params: { id:
   const t = await db.transaction.findUnique({
     where: { id: params.id },
     include: {
-      category: true, account: true, activity: true, region: true, createdBy: true, validatedBy: true, paidBy: true, controlledBy: true, cancelledBy: true,
+      category: true, account: true, activity: true, region: true, createdBy: { include: { role: true } }, validatedBy: true, paidBy: true, controlledBy: true, cancelledBy: true,
       attachments: { include: { uploadedBy: true }, orderBy: { createdAt: 'asc' } }, approvals: { include: { approver: true }, orderBy: { createdAt: 'asc' } },
       observations: { include: { raisedBy: true, assignee: true } },
     },
@@ -33,6 +33,9 @@ export default async function TxDetail({ params, searchParams }: { params: { id:
   const approvedBy = active.filter((a) => a.decision === 'APPROVED' && a.approverId).map((a) => a.approverId!);
   const required = requiredApprovals(num(t.amountMad), dbl);
   const block = approvalBlock({ userId: user.id, creatorId: t.createdById, amountMad: num(t.amountMad), threshold, doubleThreshold: dbl, approvedBy });
+  const route = routingBlock(approvedBy.length + 1, user.roleKey, t.createdBy.role.key);
+  const approverLabel = approverRoleFor(t.createdBy.role.key) === 'CAC' ? 'le Commissaire aux comptes' : 'la Trésorière';
+  const variance = t.quoteAmountMad != null ? describeVariance(num(t.quoteAmountMad), num(t.amountMad)) : null;
   const pol = editPolicy({ status: t.status, type: t.type, isCreator: t.createdById === user.id, canRequest: can('expenses.request'), canEdit: can('transactions.edit') });
   const closed = t.status === 'CANCELLED' || t.status === 'CONTROLLED';
 
@@ -61,6 +64,13 @@ export default async function TxDetail({ params, searchParams }: { params: { id:
             {budget && (
               <div className={`mt-4 rounded-lg px-3 py-2 text-sm ${budget.over || budget.noLine ? 'bg-amber-50 text-amber-800' : 'bg-green-50 text-green-800'}`}>
                 {budget.noLine ? 'Aucune ligne budgétaire pour cette catégorie dans l’activité.' : `Budget disponible : ${mad(budget.remaining)} sur ${mad(budget.planned)} prévus${budget.over ? ' — dépassement !' : '.'}`}
+              </div>
+            )}
+            {variance && (
+              <div className={`mt-3 rounded-lg px-3 py-2 text-sm ${variance.kind === 'EQUAL' ? 'bg-green-50 text-green-800' : variance.kind === 'OVER' ? 'bg-red-50 text-red-800' : 'bg-blue-50 text-blue-800'}`}>
+                Devis : <b>{mad(t.quoteAmountMad)}</b> · Dépense réelle : <b>{mad(t.amountMad)}</b> →{' '}
+                {variance.kind === 'EQUAL' ? 'aucune différence.' : <b>{variance.kind === 'OVER' ? '+' : '−'}{mad(Math.abs(variance.diff))}{variance.pct != null ? ` (${variance.pct > 0 ? '+' : ''}${variance.pct} %)` : ''}</b>}
+                {t.varianceReason && <span> Motif : {t.varianceReason}</span>}
               </div>
             )}
             {accBal && (() => {
@@ -121,7 +131,7 @@ export default async function TxDetail({ params, searchParams }: { params: { id:
               <form action={submitExpense.bind(null, t.id)}><button className="btn w-full">Soumettre pour autorisation</button></form>
             )}
             {isExpense && t.status === 'PENDING_APPROVAL' && can('expenses.approve') && (
-              block ? <p className="text-sm text-amber-700">{block}</p> : (
+              route ? <p className="text-sm text-amber-700">{route}</p> : block ? <p className="text-sm text-amber-700">{block}</p> : (
                 <form action={decideExpense.bind(null, t.id)} className="space-y-2">
                   {required > 1 && <p className="text-xs text-slate-500">Double validation : autorisation {approvedBy.length + 1}/{required}.</p>}
                   <textarea name="comment" placeholder="Commentaire (obligatoire pour refuser)" className="input" rows={2} />
@@ -131,15 +141,18 @@ export default async function TxDetail({ params, searchParams }: { params: { id:
             )}
             {isExpense && t.status === 'APPROVED' && can('expenses.pay') && (
               <form action={payExpense.bind(null, t.id)} className="space-y-2">
+                <p className="text-xs text-slate-500">Devis autorisé : <b>{mad(t.amount)}</b>{t.currency !== 'MAD' && ` (${t.currency})`}. Saisissez le montant <b>réel</b> dépensé : le compte sera débité de ce montant.</p>
+                <div><label className="label">Dépense réelle ({t.currency})</label><input name="actualAmount" inputMode="decimal" defaultValue={String(num(t.amount))} required className="input" /></div>
+                <div><label className="label">Motif de l’écart (obligatoire si le réel diffère du devis)</label><input name="varianceReason" placeholder="Ex. : hausse du prix du transport" className="input" /></div>
                 <input name="bankReference" defaultValue={t.bankReference ?? ''} placeholder="Référence bancaire / virement" className="input" />
                 <input type="file" name="proof" accept=".pdf,image/*" className="input" />
-                <button className="btn w-full">Enregistrer le paiement</button>
+                <button className="btn w-full">Enregistrer la dépense réelle</button>
               </form>
             )}
             {t.status === 'PAID' && can('audit.control') && (
               <form action={controlTransaction.bind(null, t.id)}><button className="btn w-full">Valider le contrôle</button></form>
             )}
-            {pol.allowed && user.roleKey !== 'CAC' && <Link className="btn-sec block text-center" href={`/depenses/${t.id}/modifier`}>Modifier{pol.needsReason ? ' (avec motif)' : ''}</Link>}
+            {pol.allowed && <Link className="btn-sec block text-center" href={`/depenses/${t.id}/modifier`}>Modifier{pol.needsReason ? ' (avec motif)' : ''}</Link>}
             {!closed && can('transactions.cancel') && (
               <form action={cancelTransaction.bind(null, t.id)} className="space-y-2 border-t border-slate-100 pt-3">
                 <input name="reason" required placeholder="Motif d’annulation" className="input" />
@@ -150,6 +163,7 @@ export default async function TxDetail({ params, searchParams }: { params: { id:
           </div>
 
           <div className="card"><h2 className="mb-3 font-semibold">Autorisations</h2>
+            {isExpense && t.status === 'PENDING_APPROVAL' && <p className="mb-2 text-xs text-slate-500">Autorisation requise de {approverLabel} (demande de {t.createdBy.name}).</p>}
             {!t.approvals.length && <p className="text-sm text-slate-400">—</p>}
             {t.approvals.map((a) => (
               <div key={a.id} className={`mb-2 text-sm ${a.supersededAt ? 'opacity-50 line-through' : ''}`}><Badge tone={a.decision === 'APPROVED' ? 'green' : a.decision === 'REJECTED' ? 'red' : 'amber'}>{a.decision}</Badge> {a.approver?.name} <span className="text-xs text-slate-400">niv. {a.level} · {dt(a.decidedAt)}{a.supersededAt ? ' · invalidée par modification' : ''}</span>{a.comment && <p className="text-slate-500">{a.comment}</p>}</div>

@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { db } from '@/lib/db';
 import { AppError } from '@/lib/errors';
 import { num } from '@/lib/format';
+import { approverRoleFor } from '@/lib/workflow';
 
 type Tx = Prisma.TransactionClient;
 type Client = Tx | typeof db;
@@ -60,6 +61,24 @@ export async function notifyOnce(client: Client, userIds: string[], n: { title: 
     sent++;
   }
   return sent;
+}
+
+/** Utilisateurs autorisés à décider du 1er niveau d'une demande émise par `requesterRoleKey` (Trésorière → CAC ; sinon → Trésorière). */
+export async function approverIds(client: Client, requesterRoleKey: string) {
+  const u = await client.user.findMany({
+    where: { active: true, role: { key: approverRoleFor(requesterRoleKey), permissions: { some: { permission: { key: 'expenses.approve' } } } } }, select: { id: true } });
+  return u.map((x) => x.id);
+}
+
+export async function notifyApprovers(client: Client, requesterRoleKey: string, n: { title: string; body: string; link?: string }, exclude: string[] = []) {
+  const ids = (await approverIds(client, requesterRoleKey)).filter((id) => !exclude.includes(id));
+  if (ids.length) await client.notification.createMany({ data: ids.map((userId) => ({ userId, ...n })) });
+}
+
+/** Notifie TOUS les membres actifs du bureau (écarts devis/réel, clôture d'activité). */
+export async function notifyAll(client: Client, n: { title: string; body: string; link?: string }) {
+  const u = await client.user.findMany({ where: { active: true }, select: { id: true } });
+  if (u.length) await client.notification.createMany({ data: u.map((x) => ({ userId: x.id, ...n })) });
 }
 
 export async function usersWithPerm(client: Client, perm: string) {

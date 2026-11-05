@@ -2,7 +2,8 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { db } from '@/lib/db';
 import { requirePage } from '@/lib/session';
-import { addBudgetLine, removeBudgetLine, setActivityStatus } from '@/actions/activities';
+import { addBudgetLine, removeBudgetLine, setActivityStatus, closeActivity } from '@/actions/activities';
+import { describeVariance } from '@/lib/workflow';
 import { mad, num, dt, ACTIVITY_LABEL } from '@/lib/format';
 import { Badge, Field, Flash, PageHeader, Progress, Stat, StatusBadge } from '@/components/ui';
 import { PrintButton } from '@/components/client';
@@ -22,6 +23,12 @@ export default async function ActivityPage({ params, searchParams }: { params: {
   const income = valid.filter((t) => t.type === 'INCOME').reduce((s, t) => s + num(t.amountMad), 0);
   const spent = valid.filter((t) => t.type === 'EXPENSE').reduce((s, t) => s + num(t.amountMad), 0);
   const can = user.perms.has('activities.manage');
+  // Devis autorisés vs dépenses réelles (devis conservé après paiement ; avant paiement le devis = montant demandé).
+  const expenses = txs.filter((t) => t.type === 'EXPENSE' && ['APPROVED', 'PAID', 'CONTROLLED'].includes(t.status));
+  const quoteTotal = expenses.reduce((s, t) => s + num(t.quoteAmountMad ?? t.amountMad), 0);
+  const actualTotal = valid.filter((t) => t.type === 'EXPENSE').reduce((s, t) => s + num(t.amountMad), 0);
+  const unsettled = txs.filter((t) => t.type === 'EXPENSE' && t.status === 'APPROVED').length;
+  const ds = a.settledAt ? describeVariance(num(a.quoteTotalMad), num(a.actualTotalMad)) : describeVariance(quoteTotal - expenses.filter((t) => t.status === 'APPROVED').reduce((s, t) => s + num(t.quoteAmountMad ?? t.amountMad), 0), actualTotal);
   const coveredCats = new Set(lines.map((l) => l.categoryId));
   const unbudgeted = txs.filter((t) => t.type === 'EXPENSE' && !coveredCats.has(t.categoryId) && ['APPROVED', 'PAID', 'CONTROLLED'].includes(t.status));
 
@@ -38,6 +45,20 @@ export default async function ActivityPage({ params, searchParams }: { params: {
       <div className="mb-6 grid gap-4 md:grid-cols-4">
         <Stat label="Budget prévu" value={mad(planned)} /><Stat label="Recettes encaissées" value={mad(income)} tone="green" />
         <Stat label="Dépenses payées" value={mad(spent)} tone="red" /><Stat label="Solde de l’activité" value={mad(income - spent)} tone={income - spent < 0 ? 'red' : 'green'} />
+      </div>
+      <div className="card mb-6">
+        <h2 className="mb-2 font-semibold">Devis vs dépenses réelles</h2>
+        <div className="grid gap-3 md:grid-cols-3">
+          <Stat label="Devis autorisés" value={mad(a.settledAt ? num(a.quoteTotalMad) : quoteTotal)} />
+          <Stat label="Dépenses réelles enregistrées" value={mad(a.settledAt ? num(a.actualTotalMad) : actualTotal)} tone="red" />
+          <Stat label="Écart" value={ds.kind === 'EQUAL' ? 'Aucune différence' : `${ds.diff > 0 ? '+' : '−'}${mad(Math.abs(ds.diff))}`} tone={ds.kind === 'OVER' ? 'red' : 'green'} />
+        </div>
+        {a.settledAt ? <p className="mt-3 text-sm text-green-700">Activité clôturée le {dt(a.settledAt)} : le bureau a été notifié du comparatif.</p>
+          : user.perms.has('activities.settle') && (
+            <form action={closeActivity.bind(null, a.id)} className="mt-3 flex flex-wrap items-center gap-3">
+              <button className="btn" disabled={unsettled > 0}>Clôturer l’activité et notifier le bureau</button>
+              <span className="text-xs text-slate-500">{unsettled > 0 ? `${unsettled} devis autorisé(s) attend(ent) l’enregistrement des dépenses réelles.` : 'Le comparatif devis / dépenses réelles sera envoyé à tous les membres du bureau.'}</span>
+            </form>)}
       </div>
       <div className="card mb-6 overflow-x-auto">
         <h2 className="mb-3 font-semibold">Prévision vs Réel</h2>
@@ -64,9 +85,9 @@ export default async function ActivityPage({ params, searchParams }: { params: {
       </div>
       <div className="card overflow-x-auto p-0">
         <h2 className="p-5 pb-2 font-semibold">Opérations rattachées</h2>
-        <table className="tbl"><thead><tr><th>Réf.</th><th>Date</th><th>Description</th><th>Catégorie</th><th className="text-right">Montant</th><th>Statut</th></tr></thead>
+        <table className="tbl"><thead><tr><th>Réf.</th><th>Date</th><th>Description</th><th>Catégorie</th><th className="text-right">Devis</th><th className="text-right">Montant (réel)</th><th>Statut</th></tr></thead>
           <tbody>{txs.map((t) => (
-            <tr key={t.id}><td><Link className="underline" href={`/depenses/${t.id}`}>{t.reference}</Link></td><td>{dt(t.transactionDate)}</td><td>{t.description}</td><td>{t.category.name}</td>
+            <tr key={t.id}><td><Link className="underline" href={`/depenses/${t.id}`}>{t.reference}</Link></td><td>{dt(t.transactionDate)}</td><td>{t.description}</td><td>{t.category.name}</td><td className="text-right text-slate-500">{t.type === 'EXPENSE' && t.quoteAmountMad != null ? mad(t.quoteAmountMad) : '—'}</td>
               <td className={`text-right ${t.type === 'INCOME' ? 'text-green-700' : 'text-red-700'}`}>{t.type === 'INCOME' ? '+' : '−'} {mad(t.amountMad)}</td><td><StatusBadge status={t.status} /></td></tr>
           ))}</tbody></table>
       </div>

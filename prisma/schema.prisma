@@ -195,6 +195,10 @@ model Activity {
   regionId     String?
   region       Region?        @relation(fields: [regionId], references: [id])
   createdAt    DateTime       @default(now())
+  settledAt      DateTime?
+  settledById    String?
+  quoteTotalMad  Decimal? @db.Decimal(14, 2)
+  actualTotalMad Decimal? @db.Decimal(14, 2)
   budgets      Budget[]
   transactions Transaction[]
   funds        Account[]
@@ -265,6 +269,9 @@ model Transaction {
   cancelReason   String?
 
   aiRiskScore Float?
+  quoteAmount    Decimal? @db.Decimal(14, 2)
+  quoteAmountMad Decimal? @db.Decimal(14, 2)
+  varianceReason String?
   aiCategory  String?
 
   createdAt DateTime @default(now())
