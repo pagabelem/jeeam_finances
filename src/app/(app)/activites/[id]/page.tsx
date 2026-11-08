@@ -3,6 +3,8 @@ import Link from 'next/link';
 import { db } from '@/lib/db';
 import { requirePage } from '@/lib/session';
 import { addBudgetLine, removeBudgetLine, setActivityStatus, closeActivity } from '@/actions/activities';
+import { deleteActivity } from '@/actions/delete';
+import { DeleteBox } from '@/components/delete-box';
 import { describeVariance } from '@/lib/workflow';
 import { mad, num, dt, ACTIVITY_LABEL } from '@/lib/format';
 import { Badge, Field, Flash, PageHeader, Progress, Stat, StatusBadge } from '@/components/ui';
@@ -92,6 +94,14 @@ export default async function ActivityPage({ params, searchParams }: { params: {
           ))}</tbody></table>
       </div>
       <span className="hidden"><Badge>{a.status}</Badge></span>
+      {user.perms.has('data.delete') && (
+        <div className="card mb-6 border-red-200">
+          <h2 className="mb-2 font-semibold text-red-700">Zone sensible</h2>
+          <DeleteBox action={deleteActivity.bind(null, a.id)} label="Supprimer l’activité" warn="Le budget et ses lignes sont supprimés avec l’activité.">
+            <select name="mode" className="input"><option value="detach">Conserver les opérations (elles sont détachées de l’activité)</option><option value="cascade">Supprimer aussi toutes les opérations de l’activité ({txs.length}) et leurs justificatifs</option></select>
+          </DeleteBox>
+        </div>
+      )}
     </>
   );
 }

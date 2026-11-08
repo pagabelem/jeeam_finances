@@ -5,6 +5,9 @@ import { mad, dt, iso } from '@/lib/format';
 import { Flash, PageHeader, StatusBadge, Tabs, Empty, Badge } from '@/components/ui';
 import type { Prisma } from '@prisma/client';
 import { TREASURY_TABS } from '@/lib/tabs';
+import { editPolicy } from '@/lib/workflow';
+import { deleteTransaction } from '@/actions/delete';
+import { DeleteBox } from '@/components/delete-box';
 
 export default async function Treasury({ searchParams }: { searchParams: Record<string, string | undefined> }) {
   const user = await requirePage('transactions.view');
@@ -36,7 +39,7 @@ export default async function Treasury({ searchParams }: { searchParams: Record<
       </form>
       <div className="card overflow-x-auto p-0">
         <table className="tbl">
-          <thead><tr><th>Réf.</th><th>Date</th><th>Description</th><th>Catégorie</th><th>Compte</th><th className="text-right">Montant (MAD)</th><th>Statut</th></tr></thead>
+          <thead><tr><th>Réf.</th><th>Date</th><th>Description</th><th>Catégorie</th><th>Compte</th><th className="text-right">Montant (MAD)</th><th>Statut</th><th>Actions</th></tr></thead>
           <tbody>
             {rows.map((t) => (
               <tr key={t.id} className="hover:bg-slate-50">
@@ -46,6 +49,11 @@ export default async function Treasury({ searchParams }: { searchParams: Record<
                 <td>{t.category.name}</td><td>{t.account.name}</td>
                 <td className={`text-right font-medium ${t.type === 'INCOME' ? 'text-green-700' : 'text-red-700'}`}>{t.type === 'INCOME' ? '+' : '−'} {mad(t.amountMad)}{t.currency !== 'MAD' && <div className="text-xs text-slate-400">{String(t.amount)} {t.currency}</div>}</td>
                 <td><StatusBadge status={t.status} /> {t.aiRiskScore && t.aiRiskScore >= 0.7 ? <Badge tone="red">risque</Badge> : null}</td>
+                <td className="min-w-[150px] space-y-1">
+                  {editPolicy({ status: t.status, type: t.type, isCreator: t.createdById === user.id, canRequest: user.perms.has('expenses.request'), canEdit: user.perms.has('transactions.edit') }).allowed
+                    && <div><Link className="btn-sec btn-sm" href={`/depenses/${t.id}/modifier`}>Modifier</Link></div>}
+                  {user.perms.has('data.delete') && <DeleteBox compact action={deleteTransaction.bind(null, t.id)} label="Supprimer" warn="Suppression définitive de l’opération et de ses justificatifs." />}
+                </td>
               </tr>
             ))}
           </tbody>

@@ -10,6 +10,7 @@ import { audit } from '@/lib/audit';
 import { generateSecret, verifyTotp, generateRecoveryCodes, hashRecovery } from '@/lib/totp';
 import { seal, open } from '@/lib/secretbox';
 import { TOTP_REQUIRED_ROLES } from '@/lib/permissions';
+import { sniffMime } from '@/lib/filetype';
 
 /** Les codes de secours ne sont affichés qu'une fois : cookie httpOnly de 2 minutes lu par /profil. */
 function flashCodes(codes: string[]) {
@@ -121,5 +122,30 @@ export async function adminResetTotp(id: string, fd?: FormData) {
     await audit({ userId: me.id, action: 'TOTP_ADMIN_RESET', entity: 'User', entityId: id, reason: id === me.id ? 'Auto-réinitialisation (mot de passe confirmé)' : null });
     revalidatePath('/', 'layout');
     return ok(id === me.id ? '/profil' : '/admin/utilisateurs', id === me.id ? 'Double authentification réinitialisée : scannez un nouveau QR' : 'Double authentification réinitialisée : la personne scannera un nouveau QR à sa prochaine connexion');
+  });
+}
+
+/** Photo de profil : image JPEG 256×256 produite par le navigateur, stockée en base (fonctionne sans disque persistant). */
+export async function updateAvatar(fd: FormData) {
+  await act('/profil', async () => {
+    const me = await requireAction();
+    const v = String(fd.get('avatar') ?? '');
+    const m = /^data:image\/jpeg;base64,([A-Za-z0-9+/=]+)$/.exec(v);
+    if (!m || v.length > 150_000) throw new AppError('Photo invalide ou trop lourde : choisissez une autre image.');
+    if (sniffMime(Buffer.from(m[1], 'base64')) !== 'image/jpeg') throw new AppError('Le fichier n’est pas une image valide.');
+    await db.user.update({ where: { id: me.id }, data: { avatar: v } });
+    await audit({ userId: me.id, action: 'PROFILE_AVATAR', entity: 'User', entityId: me.id });
+    revalidatePath('/', 'layout');
+    return ok('/profil', 'Photo de profil enregistrée');
+  });
+}
+
+export async function removeAvatar() {
+  await act('/profil', async () => {
+    const me = await requireAction();
+    await db.user.update({ where: { id: me.id }, data: { avatar: null } });
+    await audit({ userId: me.id, action: 'PROFILE_AVATAR_REMOVE', entity: 'User', entityId: me.id });
+    revalidatePath('/', 'layout');
+    return ok('/profil', 'Photo supprimée');
   });
 }

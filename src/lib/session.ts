@@ -16,7 +16,7 @@ export const getUser = cache(async () => {
   });
   if (!u || !u.active) return null;
   return {
-    id: u.id, name: u.name, email: u.email, roleId: u.roleId, roleKey: u.role.key, roleName: u.role.name,
+    id: u.id, name: u.name, email: u.email, avatar: u.avatar, roleId: u.roleId, roleKey: u.role.key, roleName: u.role.name,
     perms: new Set(u.role.permissions.map((rp) => rp.permission.key)),
     mustChangePassword: u.mustChangePassword, totpEnabled: u.totpEnabled,
     needs2faSetup: TOTP_REQUIRED_ROLES.includes(u.role.key) && !u.totpEnabled,

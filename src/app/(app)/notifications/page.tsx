@@ -2,6 +2,8 @@ import Link from 'next/link';
 import { db } from '@/lib/db';
 import { requirePage } from '@/lib/session';
 import { markNotificationsRead } from '@/actions/admin';
+import { deleteNotification } from '@/actions/delete';
+import { ConfirmButton } from '@/components/delete-box';
 import { dtt } from '@/lib/format';
 import { Empty, PageHeader } from '@/components/ui';
 
@@ -16,7 +18,8 @@ export default async function Notifications() {
         {list.map((n) => (
           <div key={n.id} className={`border-b border-slate-100 py-3 text-sm ${n.readAt ? 'opacity-60' : ''}`}>
             <div className="flex justify-between"><b>{n.title}</b><span className="text-xs text-slate-400">{dtt(n.createdAt)}</span></div>
-            <p className="text-slate-600">{n.body}</p>{n.link && <Link className="text-xs underline" href={n.link}>Ouvrir</Link>}
+            <p className="text-slate-600">{n.body}</p>{n.link && <Link className="text-xs underline" href={n.link}>Ouvrir</Link>}{' '}
+            <ConfirmButton action={deleteNotification.bind(null, n.id)} label={user.perms.has('data.delete') ? 'Supprimer pour tous' : 'Supprimer'} confirm={user.perms.has('data.delete') ? 'Cette notification sera supprimée chez TOUS les membres du bureau. Continuer ?' : 'Supprimer cette notification ?'} />
           </div>
         ))}
       </div>

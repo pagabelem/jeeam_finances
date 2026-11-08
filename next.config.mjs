@@ -8,7 +8,7 @@ const securityHeaders = [
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   eslint: { ignoreDuringBuilds: true },
-  experimental: { serverActions: { bodySizeLimit: '12mb' } },
+  experimental: { serverActions: { bodySizeLimit: '12mb' }, staleTimes: { dynamic: 0, static: 0 } },
   async headers() { return [{ source: '/:path*', headers: securityHeaders }]; },
 };
 export default nextConfig;

@@ -5,8 +5,9 @@ import { db } from '@/lib/db';
 import { requirePage } from '@/lib/session';
 import { open } from '@/lib/secretbox';
 import { otpauthUri } from '@/lib/totp';
-import { updateMyName, changePassword, startTotpSetup, confirmTotp, regenerateRecovery, disableTotp } from '@/actions/account';
+import { updateAvatar, removeAvatar, updateMyName, changePassword, startTotpSetup, confirmTotp, regenerateRecovery, disableTotp } from '@/actions/account';
 import { Flash } from '@/components/ui';
+import { AvatarPicker } from '@/components/avatar-picker';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,7 +26,11 @@ export default async function Profile({ searchParams }: { searchParams: { error?
   return (
     <div className="mx-auto max-w-2xl space-y-6 p-6">
       <div className="flex items-center justify-between">
-        <div><h1 className="text-2xl font-bold">Mon compte</h1><p className="text-sm text-slate-500">{me.name} — {me.roleName}</p></div>
+        <div className="flex items-center gap-4">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo-jeeam.png" alt="Logo JEEAM" width={48} height={56} className="h-14 w-12 rounded-lg bg-white object-contain p-1 shadow" />
+          <div><h1 className="text-2xl font-bold">Mon compte</h1><p className="text-sm text-slate-500">{me.name} — {me.roleName}</p></div>
+        </div>
         {!gated && <Link href="/" className="btn-sec">← Retour</Link>}
       </div>
       <Flash {...searchParams} />
@@ -42,6 +47,11 @@ export default async function Profile({ searchParams }: { searchParams: { error?
           <div className="grid grid-cols-2 gap-2 font-mono text-sm">{codes.map((c) => <div key={c} className="rounded bg-slate-100 px-3 py-1">{c}</div>)}</div>
         </div>
       )}
+
+      <div className="card space-y-3">
+        <h2 className="font-semibold">Photo de profil</h2>
+        <AvatarPicker name={me.name} current={me.avatar} save={updateAvatar} remove={removeAvatar} />
+      </div>
 
       <form action={updateMyName} className="card space-y-3">
         <h2 className="font-semibold">Informations personnelles</h2>

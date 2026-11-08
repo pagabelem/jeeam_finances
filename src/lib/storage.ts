@@ -63,4 +63,17 @@ export async function readStored(key: string): Promise<Buffer> {
   return fs.readFile(full);
 }
 
+/** Supprime le fichier physique (disque ou S3). Silencieux si déjà absent. */
+export async function deleteStored(key: string) {
+  try {
+    if (driver() === 's3') {
+      const { mod, client, bucket } = await s3();
+      await client.send(new mod.DeleteObjectCommand({ Bucket: bucket, Key: key }));
+      return;
+    }
+    const full = path.resolve(root(), key);
+    if (full.startsWith(root() + path.sep)) await fs.unlink(full);
+  } catch { /* fichier déjà absent */ }
+}
+
 export const hasFile = (v: FormDataEntryValue | null): v is File => v instanceof File && v.size > 0;

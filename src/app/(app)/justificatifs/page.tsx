@@ -3,10 +3,12 @@ import { db } from '@/lib/db';
 import { requirePage } from '@/lib/session';
 import { dt, iso, KIND_LABEL } from '@/lib/format';
 import { Badge, Empty, PageHeader } from '@/components/ui';
+import { deleteAttachment } from '@/actions/delete';
+import { DeleteBox } from '@/components/delete-box';
 import type { Prisma } from '@prisma/client';
 
 export default async function Attachments({ searchParams }: { searchParams: Record<string, string | undefined> }) {
-  await requirePage('attachments.view');
+  const user = await requirePage('attachments.view');
   const { q, kind, activityId, categoryId, from, to } = searchParams;
   const where: Prisma.AttachmentWhereInput = {
     ...(kind ? { kind: kind as never } : {}),
@@ -36,10 +38,11 @@ export default async function Attachments({ searchParams }: { searchParams: Reco
         <button className="btn md:w-40">Rechercher</button>
       </form>
       <div className="card overflow-x-auto p-0">
-        <table className="tbl"><thead><tr><th>Fichier</th><th>Type</th><th>Opération</th><th>Ajouté le</th></tr></thead>
+        <table className="tbl"><thead><tr><th>Fichier</th><th>Type</th><th>Opération</th><th>Ajouté le</th><th></th></tr></thead>
           <tbody>{rows.map((a) => (
             <tr key={a.id}><td><a className="underline" target="_blank" href={`/api/attachments/${a.id}`}>{a.fileName}</a></td><td><Badge tone="blue">{KIND_LABEL[a.kind]}</Badge></td>
-              <td><Link className="underline" href={`/depenses/${a.transactionId}`}>{a.transaction.reference}</Link></td><td>{dt(a.createdAt)}</td></tr>
+              <td><Link className="underline" href={`/depenses/${a.transactionId}`}>{a.transaction.reference}</Link></td><td>{dt(a.createdAt)}</td>
+              <td>{user.perms.has('data.delete') && <DeleteBox compact action={deleteAttachment.bind(null, a.id)} label="Supprimer" />}</td></tr>
           ))}</tbody></table>
         {!rows.length && <Empty text="Aucun justificatif." />}
       </div>

@@ -83,6 +83,7 @@ model User {
   failedAttempts Int       @default(0)
   lockedUntil    DateTime?
   mustChangePassword Boolean  @default(false)
+  avatar         String?   @db.Text
   totpSecret     String?
   totpEnabled    Boolean   @default(false)
   totpLastStep   Int?
@@ -468,4 +469,26 @@ model BalanceAdjustmentApproval {
 
   @@unique([adjustmentId, roleId])
   @@map("balance_adjustment_approvals")
+}
+
+
+
+
+
+
+model DeletionRecord {
+  id        String   @id @default(cuid())
+  seq       Int      @unique @default(autoincrement())
+  at        DateTime @default(now())
+  userId    String?
+  userName  String
+  entity    String
+  entityId  String?
+  label     String
+  reason    String
+  count     Int      @default(1)
+  snapshot  Json?
+
+  @@index([entity])
+  @@map("deletion_records")
 }

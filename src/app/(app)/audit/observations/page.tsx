@@ -1,6 +1,8 @@
 import { db } from '@/lib/db';
 import { requirePage } from '@/lib/session';
 import { advanceObservation, openObservation, respondObservation } from '@/actions/audit';
+import { deleteObservation } from '@/actions/delete';
+import { DeleteBox } from '@/components/delete-box';
 import { dt, OBS_LABEL } from '@/lib/format';
 import { Badge, Empty, Field, Flash, PageHeader } from '@/components/ui';
 import Link from 'next/link';
@@ -36,6 +38,7 @@ export default async function Observations({ searchParams }: { searchParams: { e
             <form action={respondObservation.bind(null, o.id)} className="mt-3 flex gap-2"><input name="response" required placeholder="Votre réponse…" className="input" /><button className="btn">Répondre</button></form>
           )}
           {canObserve && o.status === 'RESPONDED' && <form action={advanceObservation.bind(null, o.id, 'VERIFIED')} className="mt-3"><button className="btn">Marquer comme vérifiée</button></form>}
+          {user.perms.has('data.delete') && <div className="mt-3"><DeleteBox action={deleteObservation.bind(null, o.id)} label="Supprimer l’observation" /></div>}
           {canObserve && o.status === 'VERIFIED' && <form action={advanceObservation.bind(null, o.id, 'CLOSED')} className="mt-3"><button className="btn">Clôturer</button></form>}
         </div>
       ))}

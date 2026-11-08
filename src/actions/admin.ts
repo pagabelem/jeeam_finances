@@ -87,19 +87,29 @@ export async function saveRolePermissions(roleId: string, fd: FormData) {
     const me = await requireAction('admin.roles');
     const role = await db.role.findUnique({ where: { id: roleId }, include: { permissions: { include: { permission: true } } } });
     if (!role) throw new AppError('Rôle introuvable.');
-    let keys = fd.getAll('perm').map(String);
+    const requested = Array.from(new Set(fd.getAll('perm').map(String)));
+    let keys = [...requested];
     if (role.key === 'CAC') {
       keys = keys.filter((k) => !AUDITOR_FORBIDDEN.includes(k));
       for (const k of ['admin.roles', 'admin.users']) if (!keys.includes(k)) keys.push(k);
     }
+    const ignored = requested.filter((k) => !keys.includes(k));
     const perms = await db.permission.findMany({ where: { key: { in: keys } } });
+    const unknown = keys.filter((k) => !perms.some((p) => p.key === k));
     await db.$transaction(async (tx) => {
       await tx.rolePermission.deleteMany({ where: { roleId } });
       await tx.rolePermission.createMany({ data: perms.map((p) => ({ roleId, permissionId: p.id })) });
       await audit({ userId: me.id, action: 'ROLE_PERMISSIONS', entity: 'Role', entityId: roleId,
-        before: role.permissions.map((p) => p.permission.key).sort(), after: keys.sort() }, tx);
+        before: role.permissions.map((p) => p.permission.key).sort(), after: perms.map((p) => p.key).sort() }, tx);
     });
-    return ok('/admin/roles', `Permissions de « ${role.name} » enregistrées`);
+    // Relecture en base : on confirme ce qui est RÉELLEMENT actif (et non ce qui était coché).
+    const saved = await db.rolePermission.count({ where: { roleId } });
+    revalidatePath('/', 'layout');
+    const notes = [
+      ignored.length && `non accordées au rôle Commissaire aux comptes (règle d’indépendance) : ${ignored.length}`,
+      unknown.length && `permissions inconnues de la base, relancez « npm run db:seed » : ${unknown.join(', ')}`,
+    ].filter(Boolean).join(' ; ');
+    return ok('/admin/roles', `« ${role.name} » : ${saved} permission(s) active(s) après enregistrement. Les membres de ce rôle doivent recharger la page (F5) pour voir leur menu à jour.${notes ? ' Attention — ' + notes : ''}`);
   });
 }
 

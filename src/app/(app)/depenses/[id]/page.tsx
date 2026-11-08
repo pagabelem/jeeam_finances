@@ -6,6 +6,8 @@ import { budgetCheck, getThreshold, getDoubleThreshold, accountBalances } from '
 import { requiredApprovals, approvalBlock, editPolicy, routingBlock, approverRoleFor, describeVariance } from '@/lib/workflow';
 import { submitExpense, decideExpense, payExpense, cancelTransaction, addAttachment } from '@/actions/transactions';
 import { controlTransaction, openObservation } from '@/actions/audit';
+import { deleteTransaction, deleteAttachment } from '@/actions/delete';
+import { DeleteBox } from '@/components/delete-box';
 import { mad, num, dt, dtt, KIND_LABEL, OBS_LABEL } from '@/lib/format';
 import { Badge, Field, Flash, PageHeader, StatusBadge } from '@/components/ui';
 
@@ -91,7 +93,8 @@ export default async function TxDetail({ params, searchParams }: { params: { id:
               {t.attachments.map((a) => (
                 <li key={a.id} className="flex justify-between py-2">
                   <span><Badge tone="blue">{KIND_LABEL[a.kind]}</Badge> <a className="underline" href={`/api/attachments/${a.id}`} target="_blank">{a.fileName}</a></span>
-                  <span className="text-xs text-slate-400">{a.uploadedBy.name} · {dt(a.createdAt)}</span>
+                  <span className="text-right text-xs text-slate-400">{a.uploadedBy.name} · {dt(a.createdAt)}
+                    {can('data.delete') && <div className="mt-1"><DeleteBox compact action={deleteAttachment.bind(null, a.id)} label="Supprimer" /></div>}</span>
                 </li>
               ))}
             </ul>
@@ -160,6 +163,11 @@ export default async function TxDetail({ params, searchParams }: { params: { id:
               </form>
             )}
             {!['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'PAID'].includes(t.status) && <p className="text-sm text-slate-400">Aucune action disponible.</p>}
+            {can('data.delete') && (
+              <div className="border-t border-slate-100 pt-3">
+                <DeleteBox action={deleteTransaction.bind(null, t.id)} label="Supprimer l’opération" warn="L’opération, ses autorisations et ses justificatifs sont supprimés définitivement (impossible si la période est verrouillée par le Commissaire aux comptes)." />
+              </div>
+            )}
           </div>
 
           <div className="card"><h2 className="mb-3 font-semibold">Autorisations</h2>

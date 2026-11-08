@@ -3,6 +3,8 @@ import { requirePage } from '@/lib/session';
 import { saveRolePermissions } from '@/actions/admin';
 import { Flash } from '@/components/ui';
 
+export const dynamic = 'force-dynamic';
+
 export default async function Roles({ searchParams }: { searchParams: { error?: string; ok?: string } }) {
   await requirePage('admin.roles');
   const [roles, perms] = await Promise.all([db.role.findMany({ include: { permissions: true }, orderBy: { name: 'asc' } }), db.permission.findMany({ orderBy: [{ group: 'asc' }, { label: 'asc' }] })]);
@@ -10,7 +12,7 @@ export default async function Roles({ searchParams }: { searchParams: { error?: 
   return (
     <>
       <Flash {...searchParams} />
-      <p className="mb-4 text-sm text-slate-500">RBAC configurable : les changements s’appliquent immédiatement. Le rôle Commissaire aux comptes ne peut pas recevoir de permission opérationnelle (saisie, autorisation, paiement).</p>
+      <p className="mb-4 text-sm text-slate-500">RBAC configurable : les permissions se règlent par <b>rôle</b> (elles s’appliquent à tous les membres de ce rôle) et sont contrôlées par le serveur à chaque action. Le rôle Commissaire aux comptes ne peut pas recevoir de permission opérationnelle (saisie, autorisation, paiement).</p>
       <div className="grid gap-6 xl:grid-cols-2">
         {roles.map((r) => (
           <form key={r.id} action={saveRolePermissions.bind(null, r.id)} className="card">
